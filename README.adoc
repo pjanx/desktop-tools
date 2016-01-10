@@ -1,0 +1,49 @@
+desktop-tools
+=============
+:compact-option:
+
+'desktop-tools' is a collection of tools to run my desktop that might be useful
+to other people as well.
+
+ - 'dwmstatus' does literally everything my dwm doesn't but I'd like it to. It
+   includes PulseAudio volume management and hand-written NUT and MPD clients,
+   all in the name of liberation from GPL-licensed software of course
+ - 'brightness' allows me to change the brightness of w/e display device I have.
+
+Don't expect them to work under any OS that isn't Linux.
+
+Building and Running
+--------------------
+Build dependencies: CMake, pkg-config, liberty (included) +
+Runtime dependencies: libpulse, libx11
+
+ $ git clone --recursive https://github.com/pjanouch/desktop-tools.git
+ $ mkdir desktop-tools/build
+ $ cd desktop-tools/build
+ $ cmake .. -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE=Debug
+ $ make
+
+To install the applications, you can do either the usual:
+
+ # make install
+
+Or you can try telling CMake to make a package for you.  For Debian it is:
+
+ $ cpack -G DEB
+ # dpkg -i desktop-tools-*.deb
+
+Contributing and Support
+------------------------
+Use this project's GitHub to report any bugs, request features, or submit pull
+requests.  If you want to discuss this project, or maybe just hang out with
+the developer, feel free to join me at irc://anathema.irc.so, channel #anathema.
+
+License
+-------
+'desktop-tools' is written by Přemysl Janouch <p.janouch@gmail.com>.
+
+You may use the software under the terms of the ISC license, the text of which
+is included within the package, or, at your option, you may relicense the work
+under the MIT or the Modified BSD License, as listed at the following site:
+
+http://www.gnu.org/licenses/license-list.html

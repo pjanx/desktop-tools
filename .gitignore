@@ -1,0 +1,9 @@
+# Build files
+/build
+
+# Qt Creator files
+/CMakeLists.txt.user*
+/desktop-tools.config
+/desktop-tools.files
+/desktop-tools.creator*
+/desktop-tools.includes
