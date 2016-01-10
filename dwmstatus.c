@@ -29,9 +29,11 @@
 
 #include <dirent.h>
 #include <sys/un.h>
+#include <spawn.h>
 
 #include <X11/Xlib.h>
 #include <X11/keysym.h>
+#include <X11/XF86keysym.h>
 
 #include <pulse/mainloop.h>
 #include <pulse/context.h>
@@ -2546,16 +2548,39 @@ on_make_context (void *user_data)
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
-#define MPD_SIMPLE(name, ...)                     \
-	static void                                   \
-	on_mpd_ ## name (struct app_context *ctx)     \
-	{                                             \
-		struct mpd_client *c = &ctx->mpd_client;  \
-		if (c->state != MPD_CONNECTED)            \
-			return;                               \
-		mpd_client_send_command (c, __VA_ARGS__); \
-		mpd_client_add_task (c, NULL, NULL);      \
-		mpd_client_idle (c, 0);                   \
+static void
+spawn (struct app_context *ctx, char *argv[])
+{
+	posix_spawn_file_actions_t actions;
+	posix_spawn_file_actions_init (&actions);
+
+	posix_spawn_file_actions_addclose (&actions, ConnectionNumber (ctx->dpy));
+	if (ctx->mpd_client.socket != -1)
+		posix_spawn_file_actions_addclose (&actions, ctx->mpd_client.socket);
+	if (ctx->nut_client.socket != -1)
+		posix_spawn_file_actions_addclose (&actions, ctx->nut_client.socket);
+
+	posix_spawnattr_t attr;
+	posix_spawnattr_init (&attr);
+	posix_spawnattr_setpgroup (&attr, 0);
+
+	posix_spawnp (NULL, argv[0], &actions, &attr, argv, environ);
+
+	posix_spawn_file_actions_destroy (&actions);
+	posix_spawnattr_destroy (&attr);
+}
+
+#define MPD_SIMPLE(name, ...)                              \
+	static void                                            \
+	on_mpd_ ## name (struct app_context *ctx, int arg)     \
+	{                                                      \
+		(void) arg;                                        \
+		struct mpd_client *c = &ctx->mpd_client;           \
+		if (c->state != MPD_CONNECTED)                     \
+			return;                                        \
+		mpd_client_send_command (c, __VA_ARGS__);          \
+		mpd_client_add_task (c, NULL, NULL);               \
+		mpd_client_idle (c, 0);                            \
 	}
 
 // XXX: pause without argument is deprecated, we can watch play state
@@ -2567,21 +2592,85 @@ MPD_SIMPLE (next,     "next",     NULL)
 MPD_SIMPLE (forward,  "seekcur", "+10", NULL)
 MPD_SIMPLE (backward, "seekcur", "-10", NULL)
 
+static void
+on_volume_finish (pa_context *context, int success, void *userdata)
+{
+	(void) context;
+	(void) success;
+	(void) userdata;
+
+	// Just like... whatever, man
+}
+
+static void
+on_volume_mute (struct app_context *ctx, int arg)
+{
+	(void) arg;
+
+	if (!ctx->context)
+		return;
+
+	pa_operation_unref (pa_context_set_sink_mute_by_name (ctx->context,
+		ctx->sink_name, !ctx->muted, on_volume_finish, ctx));
+}
+
+static void
+on_volume_set (struct app_context *ctx, int arg)
+{
+	if (!ctx->context)
+		return;
+
+	pa_cvolume volume = ctx->volume;
+	if (arg > 0)
+		pa_cvolume_inc (&volume, (pa_volume_t)  arg * PA_VOLUME_NORM / 100);
+	else
+		pa_cvolume_dec (&volume, (pa_volume_t) -arg * PA_VOLUME_NORM / 100);
+	pa_operation_unref (pa_context_set_sink_volume_by_name (ctx->context,
+		ctx->sink_name, &volume, on_volume_finish, ctx));
+}
+
+static void
+on_brightness (struct app_context *ctx, int arg)
+{
+	char *value = xstrdup_printf ("%d", arg);
+	char *argv[] = { "brightness", value, NULL };
+	spawn (ctx, argv);
+	free (value);
+}
+
 struct
 {
 	unsigned mod;
 	KeySym keysym;
-	void (*handler) (struct app_context *ctx);
+	void (*handler) (struct app_context *ctx, int arg);
+	int arg;
 }
 g_keys[] =
 {
-	{ Mod4Mask,            XK_Up,    on_mpd_play     },
-	{ Mod4Mask,            XK_Down,  on_mpd_stop     },
-	{ Mod4Mask,            XK_Left,  on_mpd_prev     },
-	{ Mod4Mask,            XK_Right, on_mpd_next     },
+	// MPD
+	{ Mod4Mask,            XK_Up,        on_mpd_play,      0 },
+	{ Mod4Mask,            XK_Down,      on_mpd_stop,      0 },
+	{ Mod4Mask,            XK_Left,      on_mpd_prev,      0 },
+	{ Mod4Mask,            XK_Right,     on_mpd_next,      0 },
 	/* xmodmap | grep -e Alt_R -e Meta_R -e ISO_Level3_Shift -e Mode_switch */
-	{ Mod4Mask | Mod5Mask, XK_Left,  on_mpd_backward },
-	{ Mod4Mask | Mod5Mask, XK_Right, on_mpd_forward  },
+	{ Mod4Mask | Mod5Mask, XK_Left,      on_mpd_backward,  0 },
+	{ Mod4Mask | Mod5Mask, XK_Right,     on_mpd_forward,   0 },
+
+	// Brightness
+	{ Mod4Mask,            XK_Home,      on_brightness,   10 },
+	{ Mod4Mask,            XK_End,       on_brightness,  -10 },
+	{ 0, XF86XK_MonBrightnessUp,         on_brightness,   10 },
+	{ 0, XF86XK_MonBrightnessDown,       on_brightness,  -10 },
+
+	// Volume
+	{ Mod4Mask,            XK_Delete,    on_volume_mute,   0 },
+	{ Mod4Mask,            XK_Page_Up,   on_volume_set,   10 },
+	{ Mod4Mask | Mod5Mask, XK_Page_Up,   on_volume_set,    1 },
+	{ Mod4Mask,            XK_Page_Down, on_volume_set,  -10 },
+	{ Mod4Mask | Mod5Mask, XK_Page_Down, on_volume_set,   -1 },
+	{ 0, XF86XK_AudioMute,               on_volume_mute,   0 },
+	{ 0, XF86XK_AudioRaiseVolume,        on_volume_set,   10 },
+	{ 0, XF86XK_AudioLowerVolume,        on_volume_set,  -10 },
 };
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -2613,7 +2702,7 @@ on_x_keypress (struct app_context *ctx, XEvent *e)
 		if (keysym == g_keys[i].keysym
 		 && CLEANMASK (g_keys[i].mod) == CLEANMASK (ev->state)
 		 && g_keys[i].handler)
-			g_keys[i].handler (ctx);
+			g_keys[i].handler (ctx, g_keys[i].arg);
 }
 
 static void
