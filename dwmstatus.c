@@ -2811,6 +2811,14 @@ main (int argc, char *argv[])
 
 	opt_handler_free (&oh);
 
+	// We don't need to retrieve exit statuses of anything, avoid zombies
+	struct sigaction sa;
+	sa.sa_flags = SA_RESTART | SA_NOCLDWAIT;
+	sigemptyset (&sa.sa_mask);
+	sa.sa_handler = SIG_IGN;
+	if (sigaction (SIGCHLD, &sa, NULL) == -1)
+		print_error ("%s: %s", "sigaction", strerror (errno));
+
 	struct app_context ctx;
 	app_context_init (&ctx);
 	ctx.prefix = argc > 1 ? argv[1] : NULL;
