@@ -375,7 +375,7 @@ set_backlight (int dir, long diff, struct error **e)
 	struct str s;
 	str_init (&s);
 	str_append_printf (&s, "%ld", req);
-	bool result = write (fd, s.str, s.len) == s.len;
+	bool result = write (fd, s.str, s.len) == (ssize_t) s.len;
 	str_free (&s);
 
 	if (!result)
