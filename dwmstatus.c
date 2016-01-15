@@ -1,7 +1,7 @@
 /*
  * dwmstatus.c: simple PulseAudio-enabled dwmstatus
  *
- * Copyright (c) 2015, Přemysl Janouch <p.janouch@gmail.com>
+ * Copyright (c) 2015 - 2016, Přemysl Janouch <p.janouch@gmail.com>
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -1669,6 +1669,7 @@ static struct simple_config_item g_config_table[] =
 	{ "mpd_password",    NULL,              "MPD password"                   },
 
 	{ "nut_enabled",     "off",             "NUT UPS status reading enabled" },
+	{ "nut_load_thld",   "50",              "NUT threshold for load display" },
 
 	{ NULL,              NULL,              NULL                             }
 };
@@ -2215,7 +2216,7 @@ interval_string (unsigned long seconds)
 }
 
 static void
-nut_process_ups (struct str_vector *ups_list,
+nut_process_ups (struct app_context *ctx, struct str_vector *ups_list,
 	const char *ups_name, struct str_map *dict)
 {
 	// Not currently interested in this kind of information;
@@ -2257,7 +2258,14 @@ nut_process_ups (struct str_vector *ups_list,
 		str_vector_add_owned (&items, xstrdup_printf ("%s%%", charge));
 	if (running_on_batteries)
 		str_vector_add_owned (&items, interval_string (runtime_sec));
-	if (load)
+
+	// Only show load if it's higher than the threshold so as to not distract
+	const char *threshold = str_map_find (&ctx->config, "nut_load_thld");
+	unsigned long load_n, threshold_n;
+	if (load
+	 && xstrtoul (&load_n,      load,      10)
+	 && xstrtoul (&threshold_n, threshold, 10)
+	 && load_n >= threshold_n)
 		str_vector_add_owned (&items, xstrdup_printf ("load %s%%", load));
 
 	struct str result;
@@ -2287,7 +2295,7 @@ nut_on_logout_response (const struct nut_response *response, void *user_data)
 	str_map_iter_init (&iter, &ctx->nut_ups_info);
 	struct str_map *dict;
 	while ((dict = str_map_iter_next (&iter)))
-		nut_process_ups (&ups_list, iter.link->key, dict);
+		nut_process_ups (ctx, &ups_list, iter.link->key, dict);
 
 	free (ctx->nut_status);
 	ctx->nut_status = NULL;
