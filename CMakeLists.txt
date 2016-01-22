@@ -56,6 +56,7 @@ install (FILES fancontrol-ng.conf.example
 
 install (TARGETS dwmstatus brightness fancontrol-ng
 	DESTINATION ${CMAKE_INSTALL_BINDIR})
+install (PROGRAMS shellify DESTINATION ${CMAKE_INSTALL_BINDIR})
 install (FILES LICENSE DESTINATION ${CMAKE_INSTALL_DOCDIR})
 
 # CPack

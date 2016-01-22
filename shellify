@@ -1,0 +1,24 @@
+#!/usr/bin/env python3
+# Runs a special shell prepending a given command
+
+import sys
+import os
+import readline
+import itertools
+
+prefix = ' '.join (sys.argv[1:])
+readline.parse_and_bind ('TAB: complete')
+for n in itertools.count (start=1):
+	try:
+		line = input ('\x1b[1m%s %d>\x1b[0m ' % (prefix, n))
+		if line == '':
+			continue
+
+		readline.add_history (line)
+		os.system (prefix + ' ' + line)
+	except (EOFError, KeyboardInterrupt) as err:
+		print ('')
+		break
+	except Exception as err:
+		print ('%s\n' % err)
+

@@ -12,6 +12,8 @@ to other people as well.
  - 'fancontrol-ng' is a clone of fancontrol that can handle errors on resume
    from suspend instead of setting fans to maximum speed and quitting;
    in general it doesn't handle everything the original does
+ - 'shellify' is a simple script that sets up a shell for commands like vgdb
+   and nmcli that are painfully lacking it
 
 Don't expect them to work under any OS that isn't Linux.
 
