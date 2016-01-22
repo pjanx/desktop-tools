@@ -7,8 +7,11 @@ to other people as well.
 
  - 'dwmstatus' does literally everything my dwm doesn't but I'd like it to. It
    includes PulseAudio volume management and hand-written NUT and MPD clients,
-   all in the name of liberation from GPL-licensed software of course
+   all in the name of liberation from GPL-licensed software of course.
  - 'brightness' allows me to change the brightness of w/e display device I have.
+ - 'fancontrol-ng' is a clone of fancontrol that can handle errors on resume
+   from suspend instead of setting fans to maximum speed and quitting;
+   in general it doesn't handle everything the original does
 
 Don't expect them to work under any OS that isn't Linux.
 

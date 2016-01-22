@@ -40,11 +40,22 @@ add_threads (dwmstatus)
 
 add_executable (brightness brightness.c)
 target_link_libraries (brightness ${project_libraries})
-add_threads (brightness)
+
+add_executable (fancontrol-ng fancontrol-ng.c)
+target_link_libraries (fancontrol-ng ${project_libraries})
 
 # The files to be installed
 include (GNUInstallDirs)
-install (TARGETS dwmstatus brightness DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+configure_file (${PROJECT_SOURCE_DIR}/fancontrol-ng.service.in
+	${PROJECT_BINARY_DIR}/fancontrol-ng.service @ONLY)
+install (FILES ${PROJECT_BINARY_DIR}/fancontrol-ng.service
+	DESTINATION ${CMAKE_INSTALL_PREFIX}/lib/systemd/system)
+install (FILES fancontrol-ng.conf.example
+	DESTINATION ${CMAKE_INSTALL_DATADIR}/fancontrol-ng)
+
+install (TARGETS dwmstatus brightness fancontrol-ng
+	DESTINATION ${CMAKE_INSTALL_BINDIR})
 install (FILES LICENSE DESTINATION ${CMAKE_INSTALL_DOCDIR})
 
 # CPack

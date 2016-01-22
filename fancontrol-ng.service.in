@@ -1,0 +1,9 @@
+[Unit]
+Description=fancontrol-ng
+
+[Service]
+ExecStart=@CMAKE_INSTALL_FULL_BINDIR@/fancontrol-ng @CMAKE_INSTALL_FULL_SYSCONFDIR@/fancontrol-ng.conf
+Restart=on-abort
+
+[Install]
+WantedBy=default.target

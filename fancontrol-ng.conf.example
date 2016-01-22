@@ -1,0 +1,15 @@
+"/sys/devices/pci0000:00/0000:00:01.0/0000:01:00.0" = {
+	name = "radeon"
+	interval = 10
+	pwms = {
+		"hwmon/hwmon2/pwm1" = {
+			temp = "hwmon/hwmon2/temp1_input"
+			min_temp = 40
+			max_temp = 80
+			min_start = 50
+			min_stop = 40
+#			min_pwm = 0
+#			max_pwm = 255
+		}
+	}
+}
