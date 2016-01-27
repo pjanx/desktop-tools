@@ -14,6 +14,8 @@ to other people as well.
    in general it doesn't handle everything the original does
  - 'shellify' is a simple script that sets up a shell for commands like vgdb
    and nmcli that are painfully lacking it
+ - 'gdm-switch-user' tells the running GDM daemon, if any, to show the switch
+   user screen
 
 Don't expect them to work under any OS that isn't Linux.
 

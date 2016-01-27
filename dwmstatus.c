@@ -2638,6 +2638,18 @@ on_volume_set (struct app_context *ctx, int arg)
 }
 
 static void
+on_lock (struct app_context *ctx, int arg)
+{
+	(void) arg;
+
+	// One of these will work
+	char *argv_gdm[] = { "gdm-switch-user", NULL };
+	spawn (ctx, argv_gdm);
+	char *argv_ldm[] = { "dm-tool", "lock", NULL };
+	spawn (ctx, argv_ldm);
+}
+
+static void
 on_brightness (struct app_context *ctx, int arg)
 {
 	char *value = xstrdup_printf ("%d", arg);
@@ -2655,6 +2667,9 @@ struct
 }
 g_keys[] =
 {
+	// This key should be labeled L on normal Qwert[yz] layouts
+	{ Mod4Mask,            XK_n,         on_lock,          0 },
+
 	// MPD
 	{ Mod4Mask,            XK_Up,        on_mpd_play,      0 },
 	{ Mod4Mask,            XK_Down,      on_mpd_stop,      0 },

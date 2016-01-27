@@ -25,6 +25,9 @@ include (AddThreads)
 
 find_package (PkgConfig REQUIRED)
 pkg_check_modules (dependencies REQUIRED libpulse x11)
+pkg_check_modules (gdm gdm glib-2.0 gio-2.0)
+
+option (WITH_GDM "Compile with GDM support" ${gdm_FOUND})
 
 set (project_libraries ${dependencies_LIBRARIES})
 include_directories (${dependencies_INCLUDE_DIRS})
@@ -44,6 +47,12 @@ target_link_libraries (brightness ${project_libraries})
 add_executable (fancontrol-ng fancontrol-ng.c)
 target_link_libraries (fancontrol-ng ${project_libraries})
 
+if (WITH_GDM)
+	include_directories (${gdm_INCLUDE_DIRS})
+	add_executable (gdm-switch-user gdm-switch-user.c)
+	target_link_libraries (gdm-switch-user ${gdm_LIBRARIES})
+endif (WITH_GDM)
+
 # The files to be installed
 include (GNUInstallDirs)
 
@@ -53,6 +62,10 @@ install (FILES ${PROJECT_BINARY_DIR}/fancontrol-ng.service
 	DESTINATION ${CMAKE_INSTALL_PREFIX}/lib/systemd/system)
 install (FILES fancontrol-ng.conf.example
 	DESTINATION ${CMAKE_INSTALL_DATADIR}/fancontrol-ng)
+
+if (WITH_GDM)
+	install (TARGETS gdm-switch-user DESTINATION ${CMAKE_INSTALL_BINDIR})
+endif (WITH_GDM)
 
 install (TARGETS dwmstatus brightness fancontrol-ng
 	DESTINATION ${CMAKE_INSTALL_BINDIR})
