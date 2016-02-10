@@ -1718,11 +1718,9 @@ struct app_context
 
 	bool failed;                        ///< General PulseAudio failure
 
-	char *sink_name;                    ///< The default sink name
-	pa_cvolume volume;                  ///< Current volume
-	bool muted;                         ///< Currently muted?
+	pa_cvolume sink_volume;             ///< Current volume
+	bool sink_muted;                    ///< Currently muted?
 
-	char *source_name;                  ///< The default source name
 	bool source_muted;                  ///< Currently muted?
 };
 
@@ -1778,9 +1776,6 @@ app_context_free (struct app_context *self)
 
 	nut_client_free (&self->nut_client);
 	str_map_free (&self->nut_ups_info);
-
-	free (self->sink_name);
-	free (self->source_name);
 }
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -1944,16 +1939,16 @@ make_time_status (char *fmt)
 static char *
 make_volume_status (struct app_context *ctx)
 {
-	if (!ctx->volume.channels)
+	if (!ctx->sink_volume.channels)
 		return xstrdup ("");
 
 	struct str s;
 	str_init (&s);
-	str_append_printf (&s, "%u%%", VOLUME_PERCENT (ctx->volume.values[0]));
-	if (!pa_cvolume_channels_equal_to (&ctx->volume, ctx->volume.values[0]))
-		for (size_t i = 1; i < ctx->volume.channels; i++)
+	str_append_printf (&s, "%u%%", VOLUME_PERCENT (ctx->sink_volume.values[0]));
+	if (!pa_cvolume_channels_equal_to (&ctx->sink_volume, ctx->sink_volume.values[0]))
+		for (size_t i = 1; i < ctx->sink_volume.channels; i++)
 			str_append_printf (&s, " / %u%%",
-				VOLUME_PERCENT (ctx->volume.values[i]));
+				VOLUME_PERCENT (ctx->sink_volume.values[i]));
 	return str_steal (&s);
 }
 
@@ -1977,7 +1972,7 @@ refresh_status (struct app_context *ctx)
 	{
 		char *volumes = make_volume_status (ctx);
 		str_append_printf (&status, "%s %s   ",
-			ctx->muted ? "Muted" : "Volume", volumes);
+			ctx->sink_muted ? "Muted" : "Volume", volumes);
 		free (volumes);
 	}
 
@@ -2451,6 +2446,9 @@ on_nut_reconnect (void *user_data)
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
+#define DEFAULT_SOURCE "@DEFAULT_SOURCE@"
+#define DEFAULT_SINK   "@DEFAULT_SINK@"
+
 static void
 on_sink_info (pa_context *context, const pa_sink_info *info, int eol,
 	void *userdata)
@@ -2460,8 +2458,8 @@ on_sink_info (pa_context *context, const pa_sink_info *info, int eol,
 	if (info && !eol)
 	{
 		struct app_context *ctx = userdata;
-		ctx->volume = info->volume;
-		ctx->muted = !!info->mute;
+		ctx->sink_volume = info->volume;
+		ctx->sink_muted = !!info->mute;
 		refresh_status (ctx);
 	}
 }
@@ -2483,51 +2481,22 @@ static void
 update_volume (struct app_context *ctx)
 {
 	pa_operation_unref (pa_context_get_sink_info_by_name
-		(ctx->context, ctx->sink_name, on_sink_info, ctx));
+		(ctx->context, DEFAULT_SINK, on_sink_info, ctx));
 	pa_operation_unref (pa_context_get_source_info_by_name
-		(ctx->context, ctx->source_name, on_source_info, ctx));
-}
-
-static void
-on_server_info (pa_context *context, const pa_server_info *info, void *userdata)
-{
-	(void) context;
-
-	struct app_context *ctx = userdata;
-	free (ctx->sink_name);
-	ctx->sink_name = xstrdup (info->default_sink_name);
-	free (ctx->source_name);
-	ctx->source_name = xstrdup (info->default_source_name);
-	update_volume (ctx);
+		(ctx->context, DEFAULT_SOURCE, on_source_info, ctx));
 }
 
 static void
 on_event (pa_context *context, pa_subscription_event_type_t event,
 	uint32_t index, void *userdata)
 {
+	(void) context;
 	(void) index;
 
 	struct app_context *ctx = userdata;
-	pa_subscription_event_type_t facility =
-		event & PA_SUBSCRIPTION_EVENT_FACILITY_MASK;
-	pa_subscription_event_type_t type =
-		event & PA_SUBSCRIPTION_EVENT_TYPE_MASK;
-
-	switch (facility)
-	{
-	case PA_SUBSCRIPTION_EVENT_SINK:
-	case PA_SUBSCRIPTION_EVENT_SOURCE:
-		// XXX: can the defaults be removed before being changed?
-		if (type == PA_SUBSCRIPTION_EVENT_CHANGE)
-			update_volume (ctx);
-		break;
-	case PA_SUBSCRIPTION_EVENT_SERVER:
-		// Defaults could change
-		pa_operation_unref (pa_context_get_server_info (context,
-			on_server_info, userdata));
-	default:
-		break;
-	}
+	if ((event & PA_SUBSCRIPTION_EVENT_TYPE_MASK)
+		== PA_SUBSCRIPTION_EVENT_CHANGE)
+		update_volume (ctx);
 }
 
 static void
@@ -2564,12 +2533,11 @@ on_context_state_change (pa_context *context, void *userdata)
 		ctx->failed = false;
 		refresh_status (ctx);
 
-		pa_context_get_server_info (context, on_server_info, userdata);
 		pa_context_set_subscribe_callback (context, on_event, userdata);
 		pa_operation_unref (pa_context_subscribe (context,
-			PA_SUBSCRIPTION_MASK_SINK | PA_SUBSCRIPTION_MASK_SOURCE |
-			PA_SUBSCRIPTION_MASK_SERVER,
+			PA_SUBSCRIPTION_MASK_SINK | PA_SUBSCRIPTION_MASK_SOURCE,
 			on_subscribe_finish, userdata));
+		update_volume (ctx);
 	default:
 		return;
 	}
@@ -2649,7 +2617,7 @@ on_volume_mic_mute (struct app_context *ctx, int arg)
 		return;
 
 	pa_operation_unref (pa_context_set_source_mute_by_name (ctx->context,
-		ctx->source_name, !ctx->source_muted, on_volume_finish, ctx));
+		DEFAULT_SOURCE, !ctx->source_muted, on_volume_finish, ctx));
 }
 
 static void
@@ -2661,7 +2629,7 @@ on_volume_mute (struct app_context *ctx, int arg)
 		return;
 
 	pa_operation_unref (pa_context_set_sink_mute_by_name (ctx->context,
-		ctx->sink_name, !ctx->muted, on_volume_finish, ctx));
+		DEFAULT_SINK, !ctx->sink_muted, on_volume_finish, ctx));
 }
 
 static void
@@ -2670,13 +2638,13 @@ on_volume_set (struct app_context *ctx, int arg)
 	if (!ctx->context)
 		return;
 
-	pa_cvolume volume = ctx->volume;
+	pa_cvolume volume = ctx->sink_volume;
 	if (arg > 0)
 		pa_cvolume_inc (&volume, (pa_volume_t)  arg * PA_VOLUME_NORM / 100);
 	else
 		pa_cvolume_dec (&volume, (pa_volume_t) -arg * PA_VOLUME_NORM / 100);
 	pa_operation_unref (pa_context_set_sink_volume_by_name (ctx->context,
-		ctx->sink_name, &volume, on_volume_finish, ctx));
+		DEFAULT_SINK, &volume, on_volume_finish, ctx));
 }
 
 static void
