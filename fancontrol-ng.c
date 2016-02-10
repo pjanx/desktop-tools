@@ -535,9 +535,9 @@ load_configuration (struct app_context *ctx, const char *config_path)
 	{
 		const char *path = iter.link->key;
 		if (subtree->type != CONFIG_ITEM_OBJECT)
-			print_fatal ("device `%s' in configuration is not an object", path);
+			exit_fatal ("device `%s' in configuration is not an object", path);
 		else if (!check_device_configuration (subtree, &e))
-			print_fatal ("device `%s': %s", path, e->message);
+			exit_fatal ("device `%s': %s", path, e->message);
 		else
 			device_create (ctx, path, subtree);
 	}
