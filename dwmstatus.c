@@ -1718,9 +1718,12 @@ struct app_context
 
 	bool failed;                        ///< General PulseAudio failure
 
-	char *sink_name;                    ///< The sink to watch volume of
+	char *sink_name;                    ///< The default sink name
 	pa_cvolume volume;                  ///< Current volume
 	bool muted;                         ///< Currently muted?
+
+	char *source_name;                  ///< The default source name
+	bool source_muted;                  ///< Currently muted?
 };
 
 static void
@@ -1777,6 +1780,7 @@ app_context_free (struct app_context *self)
 	str_map_free (&self->nut_ups_info);
 
 	free (self->sink_name);
+	free (self->source_name);
 }
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -2448,18 +2452,31 @@ on_nut_reconnect (void *user_data)
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
 static void
-on_sink_info
-	(pa_context *context, const pa_sink_info *info, int eol, void *userdata)
+on_sink_info (pa_context *context, const pa_sink_info *info, int eol,
+	void *userdata)
 {
 	(void) context;
 
-	if (!info && eol)
-		return;
+	if (info && !eol)
+	{
+		struct app_context *ctx = userdata;
+		ctx->volume = info->volume;
+		ctx->muted = !!info->mute;
+		refresh_status (ctx);
+	}
+}
 
-	struct app_context *ctx = userdata;
-	ctx->volume = info->volume;
-	ctx->muted = !!info->mute;
-	refresh_status (ctx);
+static void
+on_source_info (pa_context *context, const pa_source_info *info, int eol,
+	void *userdata)
+{
+	(void) context;
+
+	if (info && !eol)
+	{
+		struct app_context *ctx = userdata;
+		ctx->source_muted = !!info->mute;
+	}
 }
 
 static void
@@ -2467,6 +2484,8 @@ update_volume (struct app_context *ctx)
 {
 	pa_operation_unref (pa_context_get_sink_info_by_name
 		(ctx->context, ctx->sink_name, on_sink_info, ctx));
+	pa_operation_unref (pa_context_get_source_info_by_name
+		(ctx->context, ctx->source_name, on_source_info, ctx));
 }
 
 static void
@@ -2476,7 +2495,9 @@ on_server_info (pa_context *context, const pa_server_info *info, void *userdata)
 
 	struct app_context *ctx = userdata;
 	free (ctx->sink_name);
-	ctx->sink_name = strdup (info->default_sink_name);
+	ctx->sink_name = xstrdup (info->default_sink_name);
+	free (ctx->source_name);
+	ctx->source_name = xstrdup (info->default_source_name);
 	update_volume (ctx);
 }
 
@@ -2484,7 +2505,6 @@ static void
 on_event (pa_context *context, pa_subscription_event_type_t event,
 	uint32_t index, void *userdata)
 {
-	(void) context;
 	(void) index;
 
 	struct app_context *ctx = userdata;
@@ -2493,15 +2513,21 @@ on_event (pa_context *context, pa_subscription_event_type_t event,
 	pa_subscription_event_type_t type =
 		event & PA_SUBSCRIPTION_EVENT_TYPE_MASK;
 
-	// XXX: can the default sink be removed before being changed?
-	if (facility == PA_SUBSCRIPTION_EVENT_SINK
-	 && type == PA_SUBSCRIPTION_EVENT_CHANGE)
-		update_volume (ctx);
-
-	// Default sink could change
-	if (facility == PA_SUBSCRIPTION_EVENT_SERVER)
+	switch (facility)
+	{
+	case PA_SUBSCRIPTION_EVENT_SINK:
+	case PA_SUBSCRIPTION_EVENT_SOURCE:
+		// XXX: can the defaults be removed before being changed?
+		if (type == PA_SUBSCRIPTION_EVENT_CHANGE)
+			update_volume (ctx);
+		break;
+	case PA_SUBSCRIPTION_EVENT_SERVER:
+		// Defaults could change
 		pa_operation_unref (pa_context_get_server_info (context,
 			on_server_info, userdata));
+	default:
+		break;
+	}
 }
 
 static void
@@ -2541,7 +2567,8 @@ on_context_state_change (pa_context *context, void *userdata)
 		pa_context_get_server_info (context, on_server_info, userdata);
 		pa_context_set_subscribe_callback (context, on_event, userdata);
 		pa_operation_unref (pa_context_subscribe (context,
-			PA_SUBSCRIPTION_MASK_SINK | PA_SUBSCRIPTION_MASK_SERVER,
+			PA_SUBSCRIPTION_MASK_SINK | PA_SUBSCRIPTION_MASK_SOURCE |
+			PA_SUBSCRIPTION_MASK_SERVER,
 			on_subscribe_finish, userdata));
 	default:
 		return;
@@ -2614,6 +2641,18 @@ on_volume_finish (pa_context *context, int success, void *userdata)
 }
 
 static void
+on_volume_mic_mute (struct app_context *ctx, int arg)
+{
+	(void) arg;
+
+	if (!ctx->context)
+		return;
+
+	pa_operation_unref (pa_context_set_source_mute_by_name (ctx->context,
+		ctx->source_name, !ctx->source_muted, on_volume_finish, ctx));
+}
+
+static void
 on_volume_mute (struct app_context *ctx, int arg)
 {
 	(void) arg;
@@ -2671,32 +2710,33 @@ struct
 g_keys[] =
 {
 	// This key should be labeled L on normal Qwert[yz] layouts
-	{ Mod4Mask,            XK_n,         on_lock,          0 },
+	{ Mod4Mask,            XK_n,         on_lock,              0 },
 
 	// MPD
-	{ Mod4Mask,            XK_Up,        on_mpd_play,      0 },
-	{ Mod4Mask,            XK_Down,      on_mpd_stop,      0 },
-	{ Mod4Mask,            XK_Left,      on_mpd_prev,      0 },
-	{ Mod4Mask,            XK_Right,     on_mpd_next,      0 },
+	{ Mod4Mask,            XK_Up,        on_mpd_play,          0 },
+	{ Mod4Mask,            XK_Down,      on_mpd_stop,          0 },
+	{ Mod4Mask,            XK_Left,      on_mpd_prev,          0 },
+	{ Mod4Mask,            XK_Right,     on_mpd_next,          0 },
 	/* xmodmap | grep -e Alt_R -e Meta_R -e ISO_Level3_Shift -e Mode_switch */
-	{ Mod4Mask | Mod5Mask, XK_Left,      on_mpd_backward,  0 },
-	{ Mod4Mask | Mod5Mask, XK_Right,     on_mpd_forward,   0 },
+	{ Mod4Mask | Mod5Mask, XK_Left,      on_mpd_backward,      0 },
+	{ Mod4Mask | Mod5Mask, XK_Right,     on_mpd_forward,       0 },
 
 	// Brightness
-	{ Mod4Mask,            XK_Home,      on_brightness,   10 },
-	{ Mod4Mask,            XK_End,       on_brightness,  -10 },
-	{ 0, XF86XK_MonBrightnessUp,         on_brightness,   10 },
-	{ 0, XF86XK_MonBrightnessDown,       on_brightness,  -10 },
+	{ Mod4Mask,            XK_Home,      on_brightness,       10 },
+	{ Mod4Mask,            XK_End,       on_brightness,      -10 },
+	{ 0, XF86XK_MonBrightnessUp,         on_brightness,       10 },
+	{ 0, XF86XK_MonBrightnessDown,       on_brightness,      -10 },
 
 	// Volume
-	{ Mod4Mask,            XK_Delete,    on_volume_mute,   0 },
-	{ Mod4Mask,            XK_Page_Up,   on_volume_set,   10 },
-	{ Mod4Mask | Mod5Mask, XK_Page_Up,   on_volume_set,    1 },
-	{ Mod4Mask,            XK_Page_Down, on_volume_set,  -10 },
-	{ Mod4Mask | Mod5Mask, XK_Page_Down, on_volume_set,   -1 },
-	{ 0, XF86XK_AudioMute,               on_volume_mute,   0 },
-	{ 0, XF86XK_AudioRaiseVolume,        on_volume_set,   10 },
-	{ 0, XF86XK_AudioLowerVolume,        on_volume_set,  -10 },
+	{ Mod4Mask,            XK_Delete,    on_volume_mute,       0 },
+	{ Mod4Mask,            XK_Page_Up,   on_volume_set,       10 },
+	{ Mod4Mask | Mod5Mask, XK_Page_Up,   on_volume_set,        1 },
+	{ Mod4Mask,            XK_Page_Down, on_volume_set,      -10 },
+	{ Mod4Mask | Mod5Mask, XK_Page_Down, on_volume_set,       -1 },
+	{ 0, XF86XK_AudioMicMute,            on_volume_mic_mute,   0 },
+	{ 0, XF86XK_AudioMute,               on_volume_mute,       0 },
+	{ 0, XF86XK_AudioRaiseVolume,        on_volume_set,       10 },
+	{ 0, XF86XK_AudioLowerVolume,        on_volume_set,      -10 },
 };
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
