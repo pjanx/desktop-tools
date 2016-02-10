@@ -34,6 +34,7 @@
 #include <X11/Xlib.h>
 #include <X11/keysym.h>
 #include <X11/XF86keysym.h>
+#include <X11/XKBlib.h>
 
 #include <pulse/mainloop.h>
 #include <pulse/context.h>
@@ -1681,6 +1682,7 @@ struct app_context
 	struct str_map config;              ///< Program configuration
 
 	Display *dpy;                       ///< X display handle
+	int xkb_base_event_code;            ///< Xkb base event code
 	const char *prefix;                 ///< User-defined prefix
 
 	struct poller poller;               ///< Poller
@@ -1737,7 +1739,8 @@ app_context_init (struct app_context *self)
 	self->config.free = free;
 	simple_config_load_defaults (&self->config, g_config_table);
 
-	if (!(self->dpy = XOpenDisplay (NULL)))
+	if (!(self->dpy = XkbOpenDisplay
+		(NULL, &self->xkb_base_event_code, NULL, NULL, NULL, NULL)))
 		exit_fatal ("cannot open display");
 
 	poller_init (&self->poller);
@@ -2701,6 +2704,7 @@ g_keys[] =
 static unsigned
 get_numlock_mask (struct app_context *ctx)
 {
+	// XXX: can XKB virtual mods help this? Chapter 8. Virtual Modifiers
 	unsigned result = 0;
 	XModifierKeymap *modmap = XGetModifierMapping (ctx->dpy);
 	for (unsigned i = 0; i < 8; i++)
@@ -2720,7 +2724,8 @@ on_x_keypress (struct app_context *ctx, XEvent *e)
 	unsigned numlock_mask = get_numlock_mask (ctx);
 
 	XKeyEvent *ev = &e->xkey;
-	KeySym keysym = XKeycodeToKeysym (ctx->dpy, (KeyCode) ev->keycode, 0);
+	KeySym keysym = XkbKeycodeToKeysym (ctx->dpy, (KeyCode) ev->keycode,
+		0, !!(ev->state & ShiftMask));
 	for (size_t i = 0; i < N_ELEMENTS (g_keys); i++)
 		if (keysym == g_keys[i].keysym
 		 && CLEANMASK (g_keys[i].mod) == CLEANMASK (ev->state)
