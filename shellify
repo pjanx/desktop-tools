@@ -11,11 +11,7 @@ readline.parse_and_bind ('TAB: complete')
 for n in itertools.count (start=1):
 	try:
 		line = input ('\x1b[1m%s %d>\x1b[0m ' % (prefix, n))
-		if line == '':
-			continue
-
-		readline.add_history (line)
-		os.system (prefix + ' ' + line)
+		if line != '': os.system (prefix + ' ' + line)
 	except (EOFError, KeyboardInterrupt) as err:
 		print ('')
 		break
