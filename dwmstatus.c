@@ -2724,19 +2724,15 @@ get_numlock_mask (struct app_context *ctx)
 	return result;
 }
 
-#define CLEANMASK(mask) (mask & ~(numlock_mask | LockMask))
-
 static void
 on_x_keypress (struct app_context *ctx, XEvent *e)
 {
-	unsigned numlock_mask = get_numlock_mask (ctx);
-
 	XKeyEvent *ev = &e->xkey;
 	KeySym keysym = XkbKeycodeToKeysym (ctx->dpy, (KeyCode) ev->keycode,
 		0, !!(ev->state & ShiftMask));
 	for (size_t i = 0; i < N_ELEMENTS (g_keys); i++)
 		if (keysym == g_keys[i].keysym
-		 && CLEANMASK (g_keys[i].mod) == CLEANMASK (ev->state)
+		 && g_keys[i].mod == ev->state
 		 && g_keys[i].handler)
 			g_keys[i].handler (ctx, g_keys[i].arg);
 }
@@ -2760,17 +2756,16 @@ on_x_ready (const struct pollfd *pfd, void *user_data)
 static void
 grab_keys (struct app_context *ctx)
 {
-	unsigned numlock_mask = get_numlock_mask (ctx);
-	unsigned modifiers[] =
-		{ 0, LockMask, numlock_mask, numlock_mask | LockMask };
+	unsigned ignored_locks = LockMask | get_numlock_mask (ctx);
+	hard_assert (XkbSetIgnoreLockMods
+		(ctx->dpy, XkbUseCoreKbd, ignored_locks, ignored_locks, 0, 0));
 
 	KeyCode code;
 	Window root = DefaultRootWindow (ctx->dpy);
 	for (size_t i = 0; i < N_ELEMENTS (g_keys); i++)
 		if ((code = XKeysymToKeycode (ctx->dpy, g_keys[i].keysym)))
-			for (size_t j = 0; j < N_ELEMENTS (modifiers); j++)
-				XGrabKey (ctx->dpy, code, g_keys[i].mod | modifiers[j], root,
-					 False /* ? */, GrabModeAsync, GrabModeAsync);
+			XGrabKey (ctx->dpy, code, g_keys[i].mod, root,
+				 False /* ? */, GrabModeAsync, GrabModeAsync);
 
 	XSelectInput (ctx->dpy, root, KeyPressMask);
 	XSync (ctx->dpy, False);
