@@ -1693,6 +1693,7 @@ struct app_context
 	// Hotkeys:
 
 	struct poller_fd x_event;           ///< X11 event
+	char *layout;                       ///< Keyboard layout
 
 	// MPD:
 
@@ -1763,6 +1764,7 @@ app_context_free (struct app_context *self)
 	str_map_free (&self->config);
 
 	poller_fd_reset (&self->x_event);
+	free (self->layout);
 
 	if (self->context)  pa_context_unref (self->context);
 	if (self->dpy)      XCloseDisplay (self->dpy);
@@ -1983,6 +1985,9 @@ refresh_status (struct app_context *ctx)
 
 	if (ctx->nut_status)
 		str_append_printf (&status, "%s   ", ctx->nut_status);
+
+	if (ctx->layout)
+		str_append_printf (&status, "%s   ", ctx->layout);
 
 	char *times = make_time_status ("Week %V, %a %d %b %Y %H:%M %Z");
 	str_append (&status, times);
@@ -2726,18 +2731,50 @@ on_x_keypress (struct app_context *ctx, XEvent *e)
 }
 
 static void
+on_xkb_event (struct app_context *ctx, XkbEvent *ev)
+{
+	int group;
+	if (ev->any.xkb_type == XkbStateNotify)
+		group = ev->state.group;
+	else
+	{
+		XkbStateRec rec;
+		XkbGetState (ctx->dpy, XkbUseCoreKbd, &rec);
+		group = rec.group;
+	}
+
+	XkbDescPtr desc = XkbAllocKeyboard ();
+	XkbGetNames (ctx->dpy, XkbGroupNamesMask, desc);
+
+	free (ctx->layout);
+	ctx->layout = NULL;
+
+	if (group != 0)
+	{
+		char *layout = XGetAtomName (ctx->dpy, desc->names->groups[group]);
+		ctx->layout = xstrdup (layout);
+		XFree (layout);
+	}
+
+	XkbFreeKeyboard (desc, 0, True);
+	refresh_status (ctx);
+}
+
+static void
 on_x_ready (const struct pollfd *pfd, void *user_data)
 {
 	(void) pfd;
 	struct app_context *ctx = user_data;
 
-	XEvent ev;
+	XkbEvent ev;
 	while (XPending (ctx->dpy))
 	{
-		if (XNextEvent (ctx->dpy, &ev))
+		if (XNextEvent (ctx->dpy, &ev.core))
 			exit_fatal ("XNextEvent returned non-zero");
 		if (ev.type == KeyPress)
-			on_x_keypress (ctx, &ev);
+			on_x_keypress (ctx, &ev.core);
+		if (ev.type == ctx->xkb_base_event_code)
+			on_xkb_event (ctx, &ev);
 	}
 }
 
@@ -2762,6 +2799,12 @@ grab_keys (struct app_context *ctx)
 	ctx->x_event.dispatcher = on_x_ready;
 	ctx->x_event.user_data = ctx;
 	poller_fd_set (&ctx->x_event, POLLIN);
+
+	// XXX: XkbMapNotify -> XkbRefreshKeyboardMapping(), ...?
+	XkbSelectEventDetails (ctx->dpy, XkbUseCoreKbd, XkbNamesNotify,
+		XkbAllNamesMask, XkbGroupNamesMask);
+	XkbSelectEventDetails (ctx->dpy, XkbUseCoreKbd, XkbStateNotify,
+		XkbAllStateComponentsMask, XkbGroupStateMask);
 }
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
