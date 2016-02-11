@@ -2713,10 +2713,13 @@ static void
 on_x_keypress (struct app_context *ctx, XEvent *e)
 {
 	XKeyEvent *ev = &e->xkey;
-	KeySym keysym = XkbKeycodeToKeysym (ctx->dpy, (KeyCode) ev->keycode,
-		0 /* XXX: current group? */, !!(ev->state & ShiftMask));
+	unsigned unconsumed_mods;
+	KeySym keysym;
+	if (!XkbLookupKeySym (ctx->dpy,
+		(KeyCode) ev->keycode, ev->state, &unconsumed_mods, &keysym))
+		return;
 	for (size_t i = 0; i < N_ELEMENTS (g_keys); i++)
-		if (keysym == g_keys[i].keysym
+		if (g_keys[i].keysym == keysym
 		 && g_keys[i].mod == ev->state
 		 && g_keys[i].handler)
 			g_keys[i].handler (ctx, g_keys[i].arg);
