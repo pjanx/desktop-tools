@@ -2709,27 +2709,12 @@ g_keys[] =
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
-static unsigned
-get_numlock_mask (struct app_context *ctx)
-{
-	// XXX: can XKB virtual mods help this? Chapter 8. Virtual Modifiers
-	unsigned result = 0;
-	XModifierKeymap *modmap = XGetModifierMapping (ctx->dpy);
-	for (unsigned i = 0; i < 8; i++)
-		for (int j = 0; j < modmap->max_keypermod; j++)
-			if (modmap->modifiermap[i * modmap->max_keypermod + j] ==
-				XKeysymToKeycode (ctx->dpy, XK_Num_Lock))
-				result = (1 << i);
-	XFreeModifiermap(modmap);
-	return result;
-}
-
 static void
 on_x_keypress (struct app_context *ctx, XEvent *e)
 {
 	XKeyEvent *ev = &e->xkey;
 	KeySym keysym = XkbKeycodeToKeysym (ctx->dpy, (KeyCode) ev->keycode,
-		0, !!(ev->state & ShiftMask));
+		0 /* XXX: current group? */, !!(ev->state & ShiftMask));
 	for (size_t i = 0; i < N_ELEMENTS (g_keys); i++)
 		if (keysym == g_keys[i].keysym
 		 && g_keys[i].mod == ev->state
@@ -2756,7 +2741,8 @@ on_x_ready (const struct pollfd *pfd, void *user_data)
 static void
 grab_keys (struct app_context *ctx)
 {
-	unsigned ignored_locks = LockMask | get_numlock_mask (ctx);
+	unsigned ignored_locks =
+		LockMask | XkbKeysymToModifiers (ctx->dpy, XK_Num_Lock);
 	hard_assert (XkbSetIgnoreLockMods
 		(ctx->dpy, XkbUseCoreKbd, ignored_locks, ignored_locks, 0, 0));
 
