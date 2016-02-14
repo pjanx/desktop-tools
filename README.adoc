@@ -3,7 +3,7 @@ desktop-tools
 :compact-option:
 
 'desktop-tools' is a collection of tools to run my desktop that might be useful
-to other people as well.
+to other people as well:
 
  - 'dwmstatus' does literally everything my dwm doesn't but I'd like it to. It
    includes PulseAudio volume management and hand-written NUT and MPD clients,
@@ -16,6 +16,8 @@ to other people as well.
    and nmcli that are painfully lacking it
  - 'gdm-switch-user' tells the running GDM daemon, if any, to show the switch
    user screen
+ - 'siprandom' uses the SipHash 2-4 algorithm to produce a stream of
+   pseudo-random data; it should be fast enough to saturate most devices
 
 Don't expect them to work under any OS that isn't Linux.
 

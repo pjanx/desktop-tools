@@ -53,6 +53,9 @@ if (WITH_GDM)
 	target_link_libraries (gdm-switch-user ${gdm_LIBRARIES})
 endif (WITH_GDM)
 
+add_executable (siprandom siprandom.c)
+target_link_libraries (siprandom ${project_libraries})
+
 # The files to be installed
 include (GNUInstallDirs)
 
@@ -67,7 +70,7 @@ if (WITH_GDM)
 	install (TARGETS gdm-switch-user DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif (WITH_GDM)
 
-install (TARGETS dwmstatus brightness fancontrol-ng
+install (TARGETS dwmstatus brightness fancontrol-ng siprandom
 	DESTINATION ${CMAKE_INSTALL_BINDIR})
 install (PROGRAMS shellify DESTINATION ${CMAKE_INSTALL_BINDIR})
 install (FILES LICENSE DESTINATION ${CMAKE_INSTALL_DOCDIR})
