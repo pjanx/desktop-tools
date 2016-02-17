@@ -1721,6 +1721,8 @@ struct app_context
 
 	pa_cvolume sink_volume;             ///< Current volume
 	bool sink_muted;                    ///< Currently muted?
+	struct str_vector sink_ports;       ///< All sink port names
+	char *sink_port_active;             ///< Active sink port
 
 	bool source_muted;                  ///< Currently muted?
 };
@@ -1756,6 +1758,8 @@ app_context_init (struct app_context *self)
 	nut_client_init (&self->nut_client, &self->poller);
 	str_map_init (&self->nut_ups_info);
 	self->nut_ups_info.free = str_map_destroy;
+
+	str_vector_init (&self->sink_ports);
 }
 
 static void
@@ -1778,6 +1782,9 @@ app_context_free (struct app_context *self)
 
 	nut_client_free (&self->nut_client);
 	str_map_free (&self->nut_ups_info);
+
+	str_vector_free (&self->sink_ports);
+	free (self->sink_port_active);
 }
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -2465,6 +2472,17 @@ on_sink_info (pa_context *context, const pa_sink_info *info, int eol,
 		struct app_context *ctx = userdata;
 		ctx->sink_volume = info->volume;
 		ctx->sink_muted = !!info->mute;
+
+		str_vector_reset (&ctx->sink_ports);
+		free (ctx->sink_port_active);
+		ctx->sink_port_active = NULL;
+
+		if (info->ports)
+			for (struct pa_sink_port_info **iter = info->ports; *iter; iter++)
+				str_vector_add (&ctx->sink_ports, (*iter)->name);
+		if (info->active_port)
+			ctx->sink_port_active = xstrdup (info->active_port->name);
+
 		refresh_status (ctx);
 	}
 }
@@ -2626,6 +2644,25 @@ on_volume_mic_mute (struct app_context *ctx, int arg)
 }
 
 static void
+on_volume_switch (struct app_context *ctx, int arg)
+{
+	(void) arg;
+
+	if (!ctx->context || !ctx->sink_port_active || !ctx->sink_ports.len)
+		return;
+
+	size_t current = 0;
+	for (size_t i = 0; i < ctx->sink_ports.len; i++)
+		if (!strcmp (ctx->sink_port_active, ctx->sink_ports.vector[i]))
+			current = i;
+
+	pa_operation_unref (pa_context_set_sink_port_by_name (ctx->context,
+		DEFAULT_SINK,
+		ctx->sink_ports.vector[(current + 1) % ctx->sink_ports.len],
+		on_volume_finish, ctx));
+}
+
+static void
 on_volume_mute (struct app_context *ctx, int arg)
 {
 	(void) arg;
@@ -2701,6 +2738,7 @@ g_keys[] =
 	{ 0, XF86XK_MonBrightnessDown,       on_brightness,      -10 },
 
 	// Volume
+	{ Mod4Mask,            XK_Insert,    on_volume_switch,     0 },
 	{ Mod4Mask,            XK_Delete,    on_volume_mute,       0 },
 	{ Mod4Mask,            XK_Page_Up,   on_volume_set,       10 },
 	{ Mod4Mask | Mod5Mask, XK_Page_Up,   on_volume_set,        1 },
