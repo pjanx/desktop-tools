@@ -21,10 +21,19 @@ to other people as well:
 
 Don't expect them to work under any OS that isn't Linux.
 
-Building and Running
---------------------
+Packages
+--------
+Regular releases are sporadic.  git master should be stable enough.  You can get
+a package with the latest development version from Archlinux's AUR, or from
+openSUSE Build Service for the rest of mainstream distributions.  Consult the
+list of repositories and their respective links at:
+
+https://build.opensuse.org/project/repositories/home:pjanouch:git
+
+Building
+--------
 Build dependencies: CMake, pkg-config, liberty (included) +
-Runtime dependencies: libpulse, libx11
+Runtime dependencies: libpulse, libx11, libgdm (optional)
 
  $ git clone --recursive https://github.com/pjanouch/desktop-tools.git
  $ mkdir desktop-tools/build
