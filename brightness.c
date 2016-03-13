@@ -33,8 +33,12 @@
 #include <sys/ioctl.h>
 #include <dirent.h>
 
-#include <linux/i2c.h>
 #include <linux/i2c-dev.h>
+#ifndef I2C_FUNC_I2C
+// Fuck you, openSUSE, for fucking up the previous file, see e.g.
+// https://github.com/solettaproject/soletta/commit/427f47f
+#include <linux/i2c.h>
+#endif
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
