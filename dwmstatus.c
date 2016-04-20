@@ -2710,6 +2710,12 @@ on_brightness (struct app_context *ctx, int arg)
 	free (value);
 }
 
+static void
+on_lock_group (struct app_context *ctx, int arg)
+{
+	XkbLockGroup (ctx->dpy, XkbUseCoreKbd, arg);
+}
+
 struct
 {
 	unsigned mod;
@@ -2730,6 +2736,12 @@ g_keys[] =
 	/* xmodmap | grep -e Alt_R -e Meta_R -e ISO_Level3_Shift -e Mode_switch */
 	{ Mod4Mask | Mod5Mask, XK_Left,      on_mpd_backward,      0 },
 	{ Mod4Mask | Mod5Mask, XK_Right,     on_mpd_forward,       0 },
+
+	// Keyboard groups
+	{ Mod4Mask,            XK_F9,        on_lock_group,        0 },
+	{ Mod4Mask,            XK_F10,       on_lock_group,        1 },
+	{ Mod4Mask,            XK_F11,       on_lock_group,        2 },
+	{ Mod4Mask,            XK_F12,       on_lock_group,        3 },
 
 	// Brightness
 	{ Mod4Mask,            XK_Home,      on_brightness,       10 },
