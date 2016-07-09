@@ -1672,6 +1672,11 @@ static struct simple_config_item g_config_table[] =
 	{ "nut_enabled",     "off",             "NUT UPS status reading enabled" },
 	{ "nut_load_thld",   "50",              "NUT threshold for load display" },
 
+	// This is just a hack because my UPS doesn't report that value; a more
+	// proper way of providing this information would be by making use of the
+	// enhanced configuration format and allowing arbitrary per-UPS overrides
+	{ "nut_load_power",  NULL,              "ups.realpower.nominal override" },
+
 	{ NULL,              NULL,              NULL                             }
 };
 
@@ -2280,7 +2285,22 @@ nut_process_ups (struct app_context *ctx, struct str_vector *ups_list,
 	 && xstrtoul (&load_n,      load,      10)
 	 && xstrtoul (&threshold_n, threshold, 10)
 	 && load_n >= threshold_n)
-		str_vector_add_owned (&items, xstrdup_printf ("load %s%%", load));
+	{
+		struct str item;
+		str_init (&item);
+		str_append_printf (&item, "load %s%%", load);
+
+		const char *power = str_map_find (dict, "ups.realpower.nominal");
+		// Override if NUT cannot tell it correctly for whatever reason
+		if (!power) power = str_map_find (&ctx->config, "nut_load_power");
+
+		// Approximation of how much electricity the perpihery actually uses
+		unsigned long power_n;
+		if (power && xstrtoul (&power_n, power, 10))
+			str_append_printf (&item, " (~%luW)", power_n * load_n / 100);
+
+		str_vector_add_owned (&items, str_steal (&item));
+	}
 
 	struct str result;
 	str_init (&result);
