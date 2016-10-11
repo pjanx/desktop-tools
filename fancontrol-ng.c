@@ -25,13 +25,6 @@
 #define PROGRAM_NAME "fancontrol-ng"
 #include "liberty/liberty.c"
 
-/// Shorthand to set an error and return failure from the function
-#define FAIL(...)                                                              \
-	BLOCK_START                                                                \
-		error_set (e, __VA_ARGS__);                                            \
-		return false;                                                          \
-	BLOCK_END
-
 // --- Main program ------------------------------------------------------------
 
 struct device
@@ -133,8 +126,7 @@ config_validate_nonnegative (const struct config_item *item, struct error **e)
 	if (item->value.integer >= 0)
 		return true;
 
-	error_set (e, "must be non-negative");
-	return false;
+	return error_set (e, "must be non-negative");
 }
 
 static struct config_schema g_config_device[] =
@@ -274,10 +266,12 @@ pwm_update (struct paths *paths, struct config_item *pwm, struct error **e)
 	int64_t min_start = get_config_integer (pwm, "min_start");
 	int64_t min_stop  = get_config_integer (pwm, "min_stop");
 
+#define FAIL(...) error_set (e, __VA_ARGS__)
 	if (min_temp >= max_temp)  FAIL ("min_temp must be less than max_temp");
 	if (pwm_max > 255)         FAIL ("pwm_max must be at most 255");
 	if (min_stop >= pwm_max)   FAIL ("min_stop must be less than pwm_max");
 	if (min_stop < pwm_min)    FAIL ("min_stop must be at least pwm_min");
+#undef FAIL
 
 	// I'm not sure if this strangely complicated computation is justifiable
 	double where
@@ -423,29 +417,6 @@ device_create (struct app_context *ctx, const char *path,
 
 // --- Configuration -----------------------------------------------------------
 
-// TODO: consider moving to liberty,
-//   degesch and json-rpc-shell have exactly the same function
-static struct config_item *
-load_configuration_file (const char *filename, struct error **e)
-{
-	struct config_item *root = NULL;
-
-	struct str data;
-	str_init (&data);
-	if (!read_file (filename, &data, e))
-		goto end;
-
-	struct error *error = NULL;
-	if (!(root = config_item_parse (data.str, data.len, false, &error)))
-	{
-		error_set (e, "parse error: %s", error->message);
-		error_free (error);
-	}
-end:
-	str_free (&data);
-	return root;
-}
-
 // There is no room for errors in the configuration, everything must be valid.
 // Thus the reset to defaults on invalid values is effectively disabled here.
 static bool
@@ -470,7 +441,7 @@ apply_schema (struct config_schema *schema, struct config_item *object,
 	{
 		// The standard warning is inappropriate here
 		error_free (warning);
-		FAIL ("invalid item `%s'", schema->name);
+		return error_set (e, "invalid item `%s'", schema->name);
 	}
 	return true;
 }
@@ -488,9 +459,9 @@ check_device_configuration (struct config_item *subtree, struct error **e)
 	if (!(pwms = config_item_get (subtree, "pwms", e)))
 		return false;
 	if (pwms->type != CONFIG_ITEM_OBJECT)
-		FAIL ("`%s' is not an object", "pwms");
+		return error_set (e, "`%s' is not an object", "pwms");
 	if (!pwms->value.object.len)
-		FAIL ("no PWMs defined");
+		return error_set (e, "no PWMs defined");
 
 	// Check regular fields in all PWM subobjects
 	struct str_map_iter iter;
@@ -509,7 +480,10 @@ check_device_configuration (struct config_item *subtree, struct error **e)
 				return false;
 			}
 		if (!get_config_string (pwm, "temp"))
-			FAIL ("PWM `%s': %s", subpath, "`temp' cannot be null");
+		{
+			return error_set (e,
+				"PWM `%s': %s", subpath, "`temp' cannot be null");
+		}
 	}
 	return true;
 }
@@ -518,7 +492,7 @@ static void
 load_configuration (struct app_context *ctx, const char *config_path)
 {
 	struct error *e = NULL;
-	struct config_item *root = load_configuration_file (config_path, &e);
+	struct config_item *root = config_read_from_file (config_path, &e);
 
 	if (e)
 	{

@@ -55,12 +55,6 @@ log_message_custom (void *user_data, const char *quote, const char *fmt,
 	fputs ("\n", stream);
 }
 
-#define FAIL(...)                                                              \
-	BLOCK_START                                                                \
-		error_set (e, __VA_ARGS__);                                            \
-		return false;                                                          \
-	BLOCK_END
-
 static void
 wait_ms (long ms)
 {
@@ -122,9 +116,9 @@ check_edid (int fd, struct error **e)
 	data.nmsgs = 2;
 
 	if (ioctl (fd, I2C_RDWR, &data) < 0)
-		FAIL ("%s: %s", "ioctl", strerror (errno));
+		return error_set (e, "%s: %s", "ioctl", strerror (errno));
 	if (memcmp ("\x00\xFF\xFF\xFF\xFF\xFF\xFF\x00", buf, sizeof buf))
-		FAIL ("invalid EDID");
+		return error_set (e, "invalid EDID");
 	return true;
 }
 
@@ -133,13 +127,13 @@ is_a_display (int fd, struct error **e)
 {
 	struct stat st;
 	if (fstat (fd, &st) < 0)
-		FAIL ("%s: %s", "fstat", strerror (errno));
+		return error_set (e, "%s: %s", "fstat", strerror (errno));
 
 	unsigned long funcs;
 	if (!(st.st_mode & S_IFCHR)
 	 || ioctl (fd, I2C_FUNCS, &funcs) < 0
 	 || !(funcs & I2C_FUNC_I2C))
-		FAIL ("not an I2C device");
+		return error_set (e, "not an I2C device");
 
 	return check_edid (fd, e);
 }
@@ -176,7 +170,7 @@ ddc_send (int fd, unsigned command, void *args, size_t args_len,
 	bool failed = ioctl (fd, I2C_RDWR, &data) < 0;
 	str_free (&buf);
 	if (failed)
-		FAIL ("%s: %s", "ioctl", strerror (errno));
+		return error_set (e, "%s: %s", "ioctl", strerror (errno));
 	return true;
 }
 
@@ -197,7 +191,7 @@ ddc_read (int fd, unsigned *command, void *out_buf, size_t *n_read,
 	data.nmsgs = 1;
 
 	if (ioctl (fd, I2C_RDWR, &data) < 0)
-		FAIL ("%s: %s", "ioctl", strerror (errno));
+		return error_set (e, "%s: %s", "ioctl", strerror (errno));
 
 	struct msg_unpacker unpacker;
 	msg_unpacker_init (&unpacker, buf, sizeof buf);
@@ -208,9 +202,9 @@ ddc_read (int fd, unsigned *command, void *out_buf, size_t *n_read,
 	(void) msg_unpacker_u8 (&unpacker, &cmd);
 
 	if (sender != (DDC_ADDRESS_DISPLAY | I2C_WRITE) || !(length & 0x80))
-		FAIL ("invalid response");
+		return error_set (e, "invalid response");
 	if (!(length ^= 0x80))
-		FAIL ("NULL response");
+		return error_set (e, "NULL response");
 
 	// TODO: also check the checksum
 
@@ -237,7 +231,7 @@ set_brightness (int fd, long diff, struct error **e)
 		return false;
 
 	if (command != DDC_GET_VCP_FEATURE_REPLY || len != 7)
-		FAIL ("invalid response");
+		return error_set (e, "invalid response");
 
 	struct msg_unpacker unpacker;
 	msg_unpacker_init (&unpacker, buf, len);
@@ -249,15 +243,15 @@ set_brightness (int fd, long diff, struct error **e)
 	int16_t cur;        msg_unpacker_i16 (&unpacker, &cur);
 
 	if (result == 0x01)
-		FAIL ("error reported by monitor");
+		return error_set (e, "error reported by monitor");
 
 	if (result != 0x00
 	 || vcp_opcode != VCP_BRIGHTNESS)
-		FAIL ("invalid response");
+		return error_set (e, "invalid response");
 
 	// These are unsigned but usually just one byte long
 	if (max < 0 || cur < 0)
-		FAIL ("capability range overflow");
+		return error_set (e, "capability range overflow");
 
 	int16_t req = (cur * 100 + diff * max + 50) / 100;
 	if (req > max) req = max;
@@ -360,10 +354,7 @@ set_backlight (int dir, long diff, struct error **e)
 	}
 
 	if (cur < 0 || max < 0)
-	{
-		error_set (e, "invalid range or current value");
-		return false;
-	}
+		return error_set (e, "invalid range or current value");
 
 	long req = (cur * 100 + diff * max + 50) / 100;
 	if (req > max) req = max;
@@ -372,8 +363,8 @@ set_backlight (int dir, long diff, struct error **e)
 	int fd = openat (dir, "brightness", O_WRONLY);
 	if (fd < 0)
 	{
-		error_set (e, "%s: %s: %s", "brightness", "openat", strerror (errno));
-		return false;
+		return error_set (e,
+			"%s: %s: %s", "brightness", "openat", strerror (errno));
 	}
 
 	struct str s;
