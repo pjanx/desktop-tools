@@ -188,6 +188,10 @@ poller_pa_io_new (pa_mainloop_api *api, int fd_, pa_io_event_flags_t events,
 	fd->user_data = self;
 	fd->dispatcher = poller_pa_io_dispatcher;
 
+	// FIXME: under x2go PA tries to register twice for the same FD,
+	//   which fails with our curent poller implementation;
+	//   we could maintain a list of { poller_fd, listeners } structures;
+	//   or maybe we're doing something wrong, which is yet to be determined
 	poller_pa_io_enable (self, events);
 	LIST_PREPEND (data->io_list, self);
 	return self;
