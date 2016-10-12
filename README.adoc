@@ -18,6 +18,8 @@ to other people as well:
    user screen
  - 'siprandom' uses the SipHash 2-4 algorithm to produce a stream of
    pseudo-random data; it should be fast enough to saturate most devices
+ - 'big-brother' tracks the title of the active window and the idle state of
+   the user and writes these events to standard output.
 
 Don't expect them to work under any OS that isn't Linux.
 
