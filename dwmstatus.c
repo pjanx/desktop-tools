@@ -1280,8 +1280,8 @@ refresh_status (struct app_context *ctx)
 	else
 	{
 		char *volumes = make_volume_status (ctx);
-		str_append_printf (&status, "%s %s   ",
-			ctx->sink_muted ? "Muted" : "Volume", volumes);
+		str_append_printf (&status, "%s%s   ",
+			ctx->sink_muted ? "Muted " : "", volumes);
 		free (volumes);
 	}
 
@@ -1376,7 +1376,6 @@ mpd_on_info_response (const struct mpd_response *response,
 	struct str s;
 	str_init (&s);
 
-	str_append (&s, "Playing: ");
 	if ((value = str_map_find (&map, "title"))
 	 || (value = str_map_find (&map, "name"))
 	 || (value = str_map_find (&map, "file")))
