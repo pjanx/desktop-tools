@@ -34,6 +34,24 @@
 
 // --- Utilities ---------------------------------------------------------------
 
+static int64_t
+clock_msec (clockid_t clock)
+{
+	struct timespec tp;
+	hard_assert (clock_gettime (clock, &tp) != -1);
+	return (int64_t) tp.tv_sec * 1000 + (int64_t) tp.tv_nsec / 1000000;
+}
+
+static char *
+timestamp (int64_t ts)
+{
+	char buf[24];
+	struct tm tm;
+	time_t when = ts / 1000;
+	strftime (buf, sizeof buf, "%F %T", gmtime_r (&when, &tm));
+	return xstrdup_printf ("%s.%03d", buf, (int) (ts % 1000));
+}
+
 static void
 log_message_custom (void *user_data, const char *quote, const char *fmt,
 	va_list ap)
@@ -41,7 +59,10 @@ log_message_custom (void *user_data, const char *quote, const char *fmt,
 	(void) user_data;
 	FILE *stream = stdout;
 
-	fprintf (stream, PROGRAM_NAME ": ");
+	char *ts = timestamp (clock_msec (CLOCK_REALTIME));
+	fprintf (stream, "%s ", ts);
+	free (ts);
+
 	fputs (quote, stream);
 	vfprintf (stream, fmt, ap);
 	fputs ("\n", stream);
