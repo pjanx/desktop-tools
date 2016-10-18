@@ -1368,17 +1368,19 @@ mpd_on_info_response (const struct mpd_response *response,
 	free (ctx->mpd_status);
 	ctx->mpd_status = NULL;
 
+	struct str s;
+	str_init (&s);
+
 	const char *value;
 	if ((value = str_map_find (&map, "state")))
 	{
 		if (!strcmp (value, "stop"))
 			ctx->mpd_status = xstrdup ("MPD stopped");
-		if (!strcmp (value, "pause"))
-			ctx->mpd_status = xstrdup ("MPD paused");
+		else if (!strcmp (value, "pause"))
+			str_append (&s, "|| ");
+		else
+			str_append (&s, "|> ");
 	}
-
-	struct str s;
-	str_init (&s);
 
 	if ((value = str_map_find (&map, "title"))
 	 || (value = str_map_find (&map, "name"))
