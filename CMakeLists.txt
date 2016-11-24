@@ -62,8 +62,9 @@ include (GNUInstallDirs)
 
 configure_file (${PROJECT_SOURCE_DIR}/fancontrol-ng.service.in
 	${PROJECT_BINARY_DIR}/fancontrol-ng.service @ONLY)
+# System-wide unit files should be installed under /lib and not /usr/lib
 install (FILES ${PROJECT_BINARY_DIR}/fancontrol-ng.service
-	DESTINATION ${CMAKE_INSTALL_PREFIX}/lib/systemd/system)
+	DESTINATION /lib/systemd/system)
 install (FILES fancontrol-ng.conf.example
 	DESTINATION ${CMAKE_INSTALL_DATADIR}/fancontrol-ng)
 
