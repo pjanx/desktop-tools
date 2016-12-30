@@ -969,7 +969,6 @@ nut_client_connect
 
 // --- Backends ----------------------------------------------------------------
 
-// TODO: rename the whole application to just wmstatus
 struct backend
 {
 	/// Initialization

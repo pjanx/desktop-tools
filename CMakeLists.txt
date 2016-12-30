@@ -60,11 +60,15 @@ target_link_libraries (big-brother ${project_libraries})
 # The files to be installed
 include (GNUInstallDirs)
 
+# We have to put this under /usr on Open Build Service RPM distros, no idea why
+set (SYSTEMD_UNITDIR /lib/systemd/system
+	CACHE PATH "Base directory for systemd unit files")
+
 configure_file (${PROJECT_SOURCE_DIR}/fancontrol-ng.service.in
 	${PROJECT_BINARY_DIR}/fancontrol-ng.service @ONLY)
 # System-wide unit files should be installed under /lib and not /usr/lib
 install (FILES ${PROJECT_BINARY_DIR}/fancontrol-ng.service
-	DESTINATION /lib/systemd/system)
+	DESTINATION "${SYSTEMD_UNITDIR}")
 install (FILES fancontrol-ng.conf.example
 	DESTINATION ${CMAKE_INSTALL_DATADIR}/fancontrol-ng)
 
