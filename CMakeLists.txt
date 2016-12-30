@@ -35,9 +35,9 @@ configure_file (${PROJECT_SOURCE_DIR}/config.h.in ${PROJECT_BINARY_DIR}/config.h
 include_directories (${PROJECT_BINARY_DIR})
 
 # Build
-add_executable (dwmstatus dwmstatus.c)
-target_link_libraries (dwmstatus ${project_libraries})
-add_threads (dwmstatus)
+add_executable (wmstatus wmstatus.c)
+target_link_libraries (wmstatus ${project_libraries})
+add_threads (wmstatus)
 
 add_executable (brightness brightness.c)
 target_link_libraries (brightness ${project_libraries})
@@ -72,7 +72,7 @@ if (WITH_GDM)
 	install (TARGETS gdm-switch-user DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif (WITH_GDM)
 
-install (TARGETS dwmstatus brightness fancontrol-ng siprandom
+install (TARGETS wmstatus brightness fancontrol-ng siprandom
 	DESTINATION ${CMAKE_INSTALL_BINDIR})
 install (PROGRAMS shellify DESTINATION ${CMAKE_INSTALL_BINDIR})
 install (FILES LICENSE DESTINATION ${CMAKE_INSTALL_DOCDIR})

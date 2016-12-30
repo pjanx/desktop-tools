@@ -1,5 +1,5 @@
 /*
- * dwmstatus.c: simple PulseAudio-enabled dwmstatus
+ * wmstatus.c: simple PulseAudio-enabled status setter for dwm and i3
  *
  * Copyright (c) 2015 - 2016, Přemysl Janouch <p.janouch@gmail.com>
  *
@@ -25,7 +25,7 @@
 
 #include "config.h"
 #undef PROGRAM_NAME
-#define PROGRAM_NAME "dwmstatus"
+#define PROGRAM_NAME "wmstatus"
 #include "liberty/liberty.c"
 
 #include <dirent.h>
@@ -57,12 +57,19 @@ log_message_custom (void *user_data, const char *quote, const char *fmt,
 	fputs ("\n", stream);
 }
 
-static void
-set_dwm_status (Display *dpy, const char *str)
+// TODO: we almost certainly want this in liberty instead of the "char" version
+static char *
+join_str_vector_ex (const struct str_vector *v, const char *delimiter)
 {
-	print_debug ("setting status to: %s", str);
-	XStoreName (dpy, DefaultRootWindow (dpy), str);
-	XSync (dpy, False);
+	if (!v->len)
+		return xstrdup ("");
+
+	struct str result;
+	str_init (&result);
+	str_append (&result, v->vector[0]);
+	for (size_t i = 1; i < v->len; i++)
+		str_append_printf (&result, "%s%s", delimiter, v->vector[i]);
+	return str_steal (&result);
 }
 
 // --- PulseAudio mainloop abstraction -----------------------------------------
@@ -960,6 +967,158 @@ nut_client_connect
 	self->state = NUT_CONNECTING;
 }
 
+// --- Backends ----------------------------------------------------------------
+
+// TODO: rename the whole application to just wmstatus
+struct backend
+{
+	/// Initialization
+	void (*start) (struct backend *self);
+	/// Deinitialization
+	void (*stop) (struct backend *self);
+	/// Destroy the backend object
+	void (*destroy) (struct backend *self);
+
+	/// Add another entry to the status
+	void (*add) (struct backend *self, const char *entry);
+	/// Flush the status to the window manager
+	void (*flush) (struct backend *self);
+};
+
+// --- DWM backend -------------------------------------------------------------
+
+struct backend_dwm
+{
+	struct backend super;               ///< Parent class
+	Display *dpy;                       ///< X11 Display
+	struct str_vector items;            ///< Items on the current row
+};
+
+static void
+backend_dwm_destroy (struct backend *b)
+{
+	struct backend_dwm *self = CONTAINER_OF (b, struct backend_dwm, super);
+	str_vector_free (&self->items);
+	free (self);
+}
+
+static void
+backend_dwm_add (struct backend *b, const char *entry)
+{
+	struct backend_dwm *self = CONTAINER_OF (b, struct backend_dwm, super);
+	str_vector_add (&self->items, entry);
+}
+
+static void
+backend_dwm_flush (struct backend *b)
+{
+	struct backend_dwm *self = CONTAINER_OF (b, struct backend_dwm, super);
+	char *str = join_str_vector_ex (&self->items, "   ");
+	str_vector_reset (&self->items);
+
+	print_debug ("setting status to: %s", str);
+	XStoreName (self->dpy, DefaultRootWindow (self->dpy), str);
+	XSync (self->dpy, False);
+
+	free (str);
+}
+
+static struct backend *
+backend_dwm_new (Display *dpy)
+{
+	struct backend_dwm *self = xcalloc (1, sizeof *self);
+	self->super.destroy = backend_dwm_destroy;
+	self->super.add     = backend_dwm_add;
+	self->super.flush   = backend_dwm_flush;
+
+	self->dpy = dpy;
+	str_vector_init (&self->items);
+	return &self->super;
+}
+
+// --- i3bar backend -----------------------------------------------------------
+
+struct backend_i3
+{
+	struct backend super;               ///< Parent class
+	struct str_vector items;            ///< Items on the current row
+};
+
+static void
+backend_i3_destroy (struct backend *b)
+{
+	struct backend_dwm *self = CONTAINER_OF (b, struct backend_dwm, super);
+	str_vector_free (&self->items);
+	free (self);
+}
+
+static void
+backend_i3_start (struct backend *b)
+{
+	(void) b;
+	// Start with an empty array so that we can later start with a comma
+	// as i3bar's JSON library is quite pedantic
+	fputs ("{\"version\":1}\n[[]", stdout);
+}
+
+static void
+backend_i3_stop (struct backend *b)
+{
+	(void) b;
+	fputc (']', stdout);
+}
+
+static void
+backend_i3_add (struct backend *b, const char *entry)
+{
+	struct backend_i3 *self = CONTAINER_OF (b, struct backend_i3, super);
+	str_vector_add (&self->items, entry);
+}
+
+static void
+backend_i3_flush (struct backend *b)
+{
+	struct backend_i3 *self = CONTAINER_OF (b, struct backend_i3, super);
+	fputs (",[", stdout);
+	for (size_t i = 0; i < self->items.len; i++)
+	{
+		if (i) fputc (',', stdout);
+
+		const char *str = self->items.vector[i];
+		size_t len = strlen (str);
+		if (!soft_assert (utf8_validate (str, len)))
+			continue;
+
+		fputs ("{\"full_text\":\"", stdout);
+		for (const char *p = str; *p; p++)
+			if (*p == '"')
+				fputs ("\\\"", stdout);
+			else if (*p == '\\')
+				fputs ("\\\\", stdout);
+			else
+				fputc (*p, stdout);
+		fputs ("\",\"separator\":false}", stdout);
+	}
+	fputs ("]\n", stdout);
+
+	// We need to flush the pipe explicitly to get i3bar to update
+	fflush (stdout);
+	str_vector_reset (&self->items);
+}
+
+static struct backend *
+backend_i3_new (void)
+{
+	struct backend_i3 *self = xcalloc (1, sizeof *self);
+	self->super.start = backend_i3_start;
+	self->super.stop  = backend_i3_stop;
+	self->super.add   = backend_i3_add;
+	self->super.flush = backend_i3_flush;
+
+	str_vector_init (&self->items);
+	return &self->super;
+}
+
 // --- Configuration -----------------------------------------------------------
 
 static struct simple_config_item g_config_table[] =
@@ -984,6 +1143,7 @@ static struct simple_config_item g_config_table[] =
 struct app_context
 {
 	struct str_map config;              ///< Program configuration
+	struct backend *backend;            ///< WM backend
 
 	Display *dpy;                       ///< X display handle
 	int xkb_base_event_code;            ///< Xkb base event code
@@ -1070,6 +1230,7 @@ static void
 app_context_free (struct app_context *self)
 {
 	str_map_free (&self->config);
+	if (self->backend)	self->backend->destroy (self->backend);
 
 	poller_fd_reset (&self->x_event);
 	free (self->layout);
@@ -1233,7 +1394,7 @@ make_battery_status (void)
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
 static char *
-make_time_status (char *fmt)
+make_time_status (const char *fmt)
 {
 	char buf[129] = "";
 	time_t now = time (NULL);
@@ -1257,55 +1418,49 @@ make_volume_status (struct app_context *ctx)
 
 	struct str s;
 	str_init (&s);
-	str_append_printf (&s, "%u%%", VOLUME_PERCENT (ctx->sink_volume.values[0]));
-	if (!pa_cvolume_channels_equal_to (&ctx->sink_volume, ctx->sink_volume.values[0]))
+	if (ctx->sink_muted)
+		str_append (&s, "Muted ");
+
+	str_append_printf (&s,
+		"%u%%", VOLUME_PERCENT (ctx->sink_volume.values[0]));
+	if (!pa_cvolume_channels_equal_to
+		(&ctx->sink_volume, ctx->sink_volume.values[0]))
+	{
 		for (size_t i = 1; i < ctx->sink_volume.channels; i++)
 			str_append_printf (&s, " / %u%%",
 				VOLUME_PERCENT (ctx->sink_volume.values[i]));
+	}
 	return str_steal (&s);
 }
 
 static void
 refresh_status (struct app_context *ctx)
 {
-	struct str status;
-	str_init (&status);
+	if (ctx->prefix)        ctx->backend->add (ctx->backend, ctx->prefix);
 
-	if (ctx->prefix)
-		str_append_printf (&status, "%s   ", ctx->prefix);
+	if (ctx->mpd_status)    ctx->backend->add (ctx->backend, ctx->mpd_status);
+	else if (ctx->mpd_song) ctx->backend->add (ctx->backend, ctx->mpd_song);
 
-	if (ctx->mpd_status)
-		str_append_printf (&status, "%s   ", ctx->mpd_status);
-	else if (ctx->mpd_song)
-		str_append_printf (&status, "%s   ", ctx->mpd_song);
-
-	if (ctx->failed)
-		str_append_printf (&status, "%s   ", "PA failure");
+	if (ctx->failed)        ctx->backend->add (ctx->backend, "PA failure");
 	else
 	{
 		char *volumes = make_volume_status (ctx);
-		str_append_printf (&status, "%s%s   ",
-			ctx->sink_muted ? "Muted " : "", volumes);
+		ctx->backend->add (ctx->backend, volumes);
 		free (volumes);
 	}
 
 	char *battery = make_battery_status ();
-	if (battery)
-		str_append_printf (&status, "%s   ", battery);
+	if (battery)            ctx->backend->add (ctx->backend, battery);
 	free (battery);
 
-	if (ctx->nut_status)
-		str_append_printf (&status, "%s   ", ctx->nut_status);
-
-	if (ctx->layout)
-		str_append_printf (&status, "%s   ", ctx->layout);
+	if (ctx->nut_status)    ctx->backend->add (ctx->backend, ctx->nut_status);
+	if (ctx->layout)        ctx->backend->add (ctx->backend, ctx->layout);
 
 	char *times = make_time_status ("Week %V, %a %d %b %Y %H:%M %Z");
-	str_append (&status, times);
+	ctx->backend->add (ctx->backend, times);
 	free (times);
 
-	set_dwm_status (ctx->dpy, status.str);
-	str_free (&status);
+	ctx->backend->flush (ctx->backend);
 }
 
 static void
@@ -2211,6 +2366,7 @@ main (int argc, char *argv[])
 		{ 'd', "debug", NULL, 0, "run in debug mode" },
 		{ 'h', "help", NULL, 0, "display this help and exit" },
 		{ 'V', "version", NULL, 0, "output version information and exit" },
+		{ '3', "i3bar", NULL, 0, "print output for i3bar instead" },
 		{ 'w', "write-default-cfg", "FILENAME",
 		  OPT_OPTIONAL_ARG | OPT_LONG_ONLY,
 		  "write a default configuration file and exit" },
@@ -2219,6 +2375,7 @@ main (int argc, char *argv[])
 
 	struct opt_handler oh;
 	opt_handler_init (&oh, argc, argv, opts, NULL, "Set root window name.");
+	bool i3bar = false;
 
 	int c;
 	while ((c = opt_handler_get (&oh)) != -1)
@@ -2233,6 +2390,9 @@ main (int argc, char *argv[])
 	case 'V':
 		printf (PROGRAM_NAME " " PROGRAM_VERSION "\n");
 		exit (EXIT_SUCCESS);
+	case '3':
+		i3bar = true;
+		break;
 	case 'w':
 		call_simple_config_write_default (optarg, g_config_table);
 		exit (EXIT_SUCCESS);
@@ -2276,8 +2436,17 @@ main (int argc, char *argv[])
 
 	grab_keys (&ctx);
 
-	poller_pa_run (ctx.api);
-	app_context_free (&ctx);
+	if (i3bar)
+		ctx.backend = backend_i3_new ();
+	else
+		ctx.backend = backend_dwm_new (ctx.dpy);
 
+	if (ctx.backend->start)
+		ctx.backend->start (ctx.backend);
+	poller_pa_run (ctx.api);
+	if (ctx.backend->stop)
+		ctx.backend->stop (ctx.backend);
+
+	app_context_free (&ctx);
 	return 0;
 }

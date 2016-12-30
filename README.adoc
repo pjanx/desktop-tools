@@ -5,7 +5,7 @@ desktop-tools
 'desktop-tools' is a collection of tools to run my desktop that might be useful
 to other people as well:
 
- - 'dwmstatus' does literally everything my dwm doesn't but I'd like it to. It
+ - 'wmstatus' does literally everything my dwm doesn't but I'd like it to. It
    includes PulseAudio volume management and hand-written NUT and MPD clients,
    all in the name of liberation from GPL-licensed software of course.
  - 'brightness' allows me to change the brightness of w/e display device I have.
