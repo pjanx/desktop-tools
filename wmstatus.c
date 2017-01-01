@@ -2078,6 +2078,10 @@ spawn (struct app_context *ctx, char *argv[])
 	if (ctx->nut_client.socket != -1)
 		posix_spawn_file_actions_addclose (&actions, ctx->nut_client.socket);
 
+	// That would mess up our JSON
+	posix_spawn_file_actions_addopen
+		(&actions, STDOUT_FILENO, "/dev/null", O_WRONLY, 0);
+
 	posix_spawnattr_t attr;
 	posix_spawnattr_init (&attr);
 	posix_spawnattr_setpgroup (&attr, 0);
