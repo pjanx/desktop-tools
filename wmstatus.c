@@ -1532,12 +1532,14 @@ mpd_on_info_response (const struct mpd_response *response,
 	const char *value;
 	if ((value = str_map_find (&map, "state")))
 	{
+		// Unicode approximates since in proportional fonts ASCII looks ugly
+		// and I don't want to depend on a particular font with player chars
 		if (!strcmp (value, "stop"))
 			ctx->mpd_status = xstrdup ("MPD stopped");
 		else if (!strcmp (value, "pause"))
-			str_append (&s, "|| ");
+			str_append (&s, "▯▯ " /* "|| " */);
 		else
-			str_append (&s, "|> ");
+			str_append (&s, "▷ "  /* "|> " */);
 	}
 
 	if ((value = str_map_find (&map, "title"))
