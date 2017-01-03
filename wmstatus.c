@@ -1015,6 +1015,11 @@ backend_dwm_flush (struct backend *b)
 	char *str = join_str_vector_ex (&self->items, "   ");
 	str_vector_reset (&self->items);
 
+	// We don't have formatting, so let's at least quote those spans
+	for (char *p = str; *p; p++)
+		if (*p == '\001')
+			*p = '"';
+
 	print_debug ("setting status to: %s", str);
 	XStoreName (self->dpy, DefaultRootWindow (self->dpy), str);
 	XSync (self->dpy, False);
@@ -1089,14 +1094,21 @@ backend_i3_flush (struct backend *b)
 			continue;
 
 		fputs ("{\"full_text\":\"", stdout);
+		bool bold = false;
 		for (const char *p = str; *p; p++)
-			if (*p == '"')
-				fputs ("\\\"", stdout);
-			else if (*p == '\\')
-				fputs ("\\\\", stdout);
+			if      (*p == '"')  fputs ("\\\"",  stdout);
+			else if (*p == '\\') fputs ("\\\\",  stdout);
+			else if (*p == '<')  fputs ("&lt;",  stdout);
+			else if (*p == '>')  fputs ("&gt;",  stdout);
+			else if (*p == '&')  fputs ("&amp;", stdout);
+			else if (*p == '\001')
+				fputs ((bold = !bold)
+					? "<span weight='bold'>" : "</span>", stdout);
 			else
 				fputc (*p, stdout);
-		fputs ("\",\"separator\":false}", stdout);
+		if (bold)
+			fputs ("</span>", stdout);
+		fputs ("\",\"separator\":false,\"markup\":\"pango\"}", stdout);
 	}
 	fputs ("]\n", stdout);
 
@@ -1551,11 +1563,11 @@ mpd_on_info_response (const struct mpd_response *response,
 	if ((value = str_map_find (&map, "title"))
 	 || (value = str_map_find (&map, "name"))
 	 || (value = str_map_find (&map, "file")))
-		str_append_printf (&s, "\"%s\"", value);
+		str_append_printf (&s, "\001%s\001", value);
 	if ((value = str_map_find (&map, "artist")))
-		str_append_printf (&s, " by \"%s\"", value);
+		str_append_printf (&s, " by \001%s\001", value);
 	if ((value = str_map_find (&map, "album")))
-		str_append_printf (&s, " from \"%s\"", value);
+		str_append_printf (&s, " from \001%s\001", value);
 
 	free (ctx->mpd_song);
 	ctx->mpd_song = str_steal (&s);
