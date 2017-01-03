@@ -1316,10 +1316,16 @@ read_battery_status (int dir, struct error **e)
 		error_propagate (e, error);
 	else
 	{
+		struct str s;
+		str_init (&s);
+		str_append (&s, status);
+
 		// Dell is being unreasonable and seems to set charge_now
 		// to charge_full_design when the battery is fully charged
 		unsigned percentage = charge_now / charge_full * 100 + 0.5;
-		result = xstrdup_printf ("%s (%u%%)", status, MIN (percentage, 100));
+		if (percentage < 100)
+			str_append_printf (&s, " (%u%%)", percentage);
+		result = str_steal (&s);
 	}
 
 	free (status);
