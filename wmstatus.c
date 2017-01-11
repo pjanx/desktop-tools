@@ -49,7 +49,7 @@ log_message_custom (void *user_data, const char *quote, const char *fmt,
 	va_list ap)
 {
 	(void) user_data;
-	FILE *stream = stdout;
+	FILE *stream = stderr;
 
 	fprintf (stream, PROGRAM_NAME ": ");
 	fputs (quote, stream);
