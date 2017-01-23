@@ -57,21 +57,6 @@ log_message_custom (void *user_data, const char *quote, const char *fmt,
 	fputs ("\n", stream);
 }
 
-// TODO: we almost certainly want this in liberty instead of the "char" version
-static char *
-join_str_vector_ex (const struct str_vector *v, const char *delimiter)
-{
-	if (!v->len)
-		return xstrdup ("");
-
-	struct str result;
-	str_init (&result);
-	str_append (&result, v->vector[0]);
-	for (size_t i = 1; i < v->len; i++)
-		str_append_printf (&result, "%s%s", delimiter, v->vector[i]);
-	return str_steal (&result);
-}
-
 // --- PulseAudio mainloop abstraction -----------------------------------------
 
 struct pa_io_event
@@ -444,7 +429,7 @@ struct nut_parser
 
 	// Public:
 
-	struct str_vector fields;           ///< Line fields
+	struct strv fields;                 ///< Line fields
 };
 
 static void
@@ -452,20 +437,20 @@ nut_parser_init (struct nut_parser *self)
 {
 	self->state = NUT_STATE_START_LINE;
 	str_init (&self->current_field);
-	str_vector_init (&self->fields);
+	strv_init (&self->fields);
 }
 
 static void
 nut_parser_free (struct nut_parser *self)
 {
 	str_free (&self->current_field);
-	str_vector_free (&self->fields);
+	strv_free (&self->fields);
 }
 
 static int
 nut_parser_end_field (struct nut_parser *self, char c)
 {
-	str_vector_add (&self->fields, self->current_field.str);
+	strv_append (&self->fields, self->current_field.str);
 	str_reset (&self->current_field);
 
 	if (c == '\n')
@@ -485,7 +470,7 @@ nut_parser_push (struct nut_parser *self, char c)
 	switch (self->state)
 	{
 	case NUT_STATE_START_LINE:
-		str_vector_reset (&self->fields);
+		strv_reset (&self->fields);
 		str_reset (&self->current_field);
 		self->state = NUT_STATE_BETWEEN;
 		// Fall-through
@@ -554,7 +539,7 @@ struct nut_line
 {
 	LIST_HEADER (struct nut_line)
 
-	struct str_vector fields;           ///< Parsed fields from the line
+	struct strv fields;                 ///< Parsed fields from the line
 };
 
 struct nut_response
@@ -658,7 +643,7 @@ nut_client_flush_data (struct nut_client *self)
 {
 	LIST_FOR_EACH (struct nut_line, iter, self->data)
 	{
-		str_vector_free (&iter->fields);
+		strv_free (&iter->fields);
 		free (iter);
 	}
 	self->data = self->data_tail = NULL;
@@ -767,7 +752,7 @@ nut_client_parse_line (struct nut_client *self)
 	print_debug ("NUT >> %s", reconstructed.str);
 	str_free (&reconstructed);
 
-	struct str_vector *fields = &self->parser.fields;
+	struct strv *fields = &self->parser.fields;
 	hard_assert (fields->len != 0);
 
 	// Lists are always dispatched as their innards (and they can be empty)
@@ -782,8 +767,8 @@ nut_client_parse_line (struct nut_client *self)
 	else
 	{
 		struct nut_line *line = xcalloc (1, sizeof *line);
-		str_vector_init (&line->fields);
-		str_vector_add_vector (&line->fields, fields->vector);
+		strv_init (&line->fields);
+		strv_append_vector (&line->fields, fields->vector);
 		LIST_APPEND_WITH_TAIL (self->data, self->data_tail, line);
 	}
 
@@ -886,17 +871,17 @@ nut_client_send_commandv (struct nut_client *self, char **commands)
 static void
 nut_client_send_command (struct nut_client *self, const char *command, ...)
 {
-	struct str_vector v;
-	str_vector_init (&v);
+	struct strv v;
+	strv_init (&v);
 
 	va_list ap;
 	va_start (ap, command);
 	for (; command; command = va_arg (ap, const char *))
-		str_vector_add (&v, command);
+		strv_append (&v, command);
 	va_end (ap);
 
 	nut_client_send_commandv (self, v.vector);
-	str_vector_free (&v);
+	strv_free (&v);
 }
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -990,14 +975,14 @@ struct backend_dwm
 {
 	struct backend super;               ///< Parent class
 	Display *dpy;                       ///< X11 Display
-	struct str_vector items;            ///< Items on the current row
+	struct strv items;                  ///< Items on the current row
 };
 
 static void
 backend_dwm_destroy (struct backend *b)
 {
 	struct backend_dwm *self = CONTAINER_OF (b, struct backend_dwm, super);
-	str_vector_free (&self->items);
+	strv_free (&self->items);
 	free (self);
 }
 
@@ -1005,15 +990,15 @@ static void
 backend_dwm_add (struct backend *b, const char *entry)
 {
 	struct backend_dwm *self = CONTAINER_OF (b, struct backend_dwm, super);
-	str_vector_add (&self->items, entry);
+	strv_append (&self->items, entry);
 }
 
 static void
 backend_dwm_flush (struct backend *b)
 {
 	struct backend_dwm *self = CONTAINER_OF (b, struct backend_dwm, super);
-	char *str = join_str_vector_ex (&self->items, "   ");
-	str_vector_reset (&self->items);
+	char *str = strv_join (&self->items, "   ");
+	strv_reset (&self->items);
 
 	// We don't have formatting, so let's at least quote those spans
 	for (char *p = str; *p; p++)
@@ -1036,7 +1021,7 @@ backend_dwm_new (Display *dpy)
 	self->super.flush   = backend_dwm_flush;
 
 	self->dpy = dpy;
-	str_vector_init (&self->items);
+	strv_init (&self->items);
 	return &self->super;
 }
 
@@ -1045,14 +1030,14 @@ backend_dwm_new (Display *dpy)
 struct backend_i3
 {
 	struct backend super;               ///< Parent class
-	struct str_vector items;            ///< Items on the current row
+	struct strv items;                  ///< Items on the current row
 };
 
 static void
 backend_i3_destroy (struct backend *b)
 {
 	struct backend_dwm *self = CONTAINER_OF (b, struct backend_dwm, super);
-	str_vector_free (&self->items);
+	strv_free (&self->items);
 	free (self);
 }
 
@@ -1076,7 +1061,7 @@ static void
 backend_i3_add (struct backend *b, const char *entry)
 {
 	struct backend_i3 *self = CONTAINER_OF (b, struct backend_i3, super);
-	str_vector_add (&self->items, entry);
+	strv_append (&self->items, entry);
 }
 
 static void
@@ -1114,7 +1099,7 @@ backend_i3_flush (struct backend *b)
 
 	// We need to flush the pipe explicitly to get i3bar to update
 	fflush (stdout);
-	str_vector_reset (&self->items);
+	strv_reset (&self->items);
 }
 
 static struct backend *
@@ -1126,7 +1111,7 @@ backend_i3_new (void)
 	self->super.add   = backend_i3_add;
 	self->super.flush = backend_i3_flush;
 
-	str_vector_init (&self->items);
+	strv_init (&self->items);
 	return &self->super;
 }
 
@@ -1196,7 +1181,7 @@ struct app_context
 
 	pa_cvolume sink_volume;             ///< Current volume
 	bool sink_muted;                    ///< Currently muted?
-	struct str_vector sink_ports;       ///< All sink port names
+	struct strv sink_ports;             ///< All sink port names
 	char *sink_port_active;             ///< Active sink port
 
 	bool source_muted;                  ///< Currently muted?
@@ -1234,7 +1219,7 @@ app_context_init (struct app_context *self)
 	str_map_init (&self->nut_ups_info);
 	self->nut_ups_info.free = str_map_destroy;
 
-	str_vector_init (&self->sink_ports);
+	strv_init (&self->sink_ports);
 }
 
 static void
@@ -1259,7 +1244,7 @@ app_context_free (struct app_context *self)
 	nut_client_free (&self->nut_client);
 	str_map_free (&self->nut_ups_info);
 
-	str_vector_free (&self->sink_ports);
+	strv_free (&self->sink_ports);
 	free (self->sink_port_active);
 }
 
@@ -1510,7 +1495,7 @@ on_refresh_rest (void *user_data)
 
 // Sometimes it's not that easy and there can be repeating entries
 static void
-mpd_vector_to_map (const struct str_vector *data, struct str_map *map)
+mpd_vector_to_map (const struct strv *data, struct str_map *map)
 {
 	str_map_init (map);
 	map->key_xfrm = tolower_ascii_strxfrm;
@@ -1528,7 +1513,7 @@ mpd_vector_to_map (const struct str_vector *data, struct str_map *map)
 
 static void
 mpd_on_info_response (const struct mpd_response *response,
-	const struct str_vector *data, void *user_data)
+	const struct strv *data, void *user_data)
 {
 	if (!response->success)
 	{
@@ -1612,7 +1597,7 @@ mpd_queue_reconnect (struct app_context *ctx)
 
 static void
 mpd_on_password_response (const struct mpd_response *response,
-	const struct str_vector *data, void *user_data)
+	const struct strv *data, void *user_data)
 {
 	(void) data;
 	struct app_context *ctx = user_data;
@@ -1699,20 +1684,20 @@ nut_common_handler (const struct nut_response *response)
 }
 
 static void
-nut_translate_status (const char *status, struct str_vector *out)
+nut_translate_status (const char *status, struct strv *out)
 {
 	// https://github.com/networkupstools/nut/blob/master/clients/status.h
-	if (!strcmp (status, "OL"))      str_vector_add (out, "on-line");
-	if (!strcmp (status, "OB"))      str_vector_add (out, "on battery");
-	if (!strcmp (status, "LB"))      str_vector_add (out, "low battery");
-	if (!strcmp (status, "RB"))      str_vector_add (out, "replace battery");
-	if (!strcmp (status, "CHRG"))    str_vector_add (out, "charging");
-	if (!strcmp (status, "DISCHRG")) str_vector_add (out, "discharging");
-	if (!strcmp (status, "OVER"))    str_vector_add (out, "overload");
-	if (!strcmp (status, "OFF"))     str_vector_add (out, "off");
-	if (!strcmp (status, "TRIM"))    str_vector_add (out, "voltage trim");
-	if (!strcmp (status, "BOOST"))   str_vector_add (out, "voltage boost");
-	if (!strcmp (status, "BYPASS"))  str_vector_add (out, "bypass");
+	if (!strcmp (status, "OL"))      strv_append (out, "on-line");
+	if (!strcmp (status, "OB"))      strv_append (out, "on battery");
+	if (!strcmp (status, "LB"))      strv_append (out, "low battery");
+	if (!strcmp (status, "RB"))      strv_append (out, "replace battery");
+	if (!strcmp (status, "CHRG"))    strv_append (out, "charging");
+	if (!strcmp (status, "DISCHRG")) strv_append (out, "discharging");
+	if (!strcmp (status, "OVER"))    strv_append (out, "overload");
+	if (!strcmp (status, "OFF"))     strv_append (out, "off");
+	if (!strcmp (status, "TRIM"))    strv_append (out, "voltage trim");
+	if (!strcmp (status, "BOOST"))   strv_append (out, "voltage boost");
+	if (!strcmp (status, "BYPASS"))  strv_append (out, "bypass");
 }
 
 static char *
@@ -1724,7 +1709,7 @@ interval_string (unsigned long seconds)
 }
 
 static void
-nut_process_ups (struct app_context *ctx, struct str_vector *ups_list,
+nut_process_ups (struct app_context *ctx, struct strv *ups_list,
 	const char *ups_name, struct str_map *dict)
 {
 	// Not currently interested in this kind of information;
@@ -1744,13 +1729,13 @@ nut_process_ups (struct app_context *ctx, struct str_vector *ups_list,
 	if (!soft_assert (xstrtoul (&runtime_sec, runtime, 10)))
 		return;
 
-	struct str_vector items;
-	str_vector_init (&items);
+	struct strv items;
+	strv_init (&items);
 
 	bool running_on_batteries = false;
 
-	struct str_vector v;
-	str_vector_init (&v);
+	struct strv v;
+	strv_init (&v);
 	cstr_split (status, " ", true, &v);
 	for (size_t i = 0; i < v.len; i++)
 	{
@@ -1760,12 +1745,12 @@ nut_process_ups (struct app_context *ctx, struct str_vector *ups_list,
 		if (!strcmp (status, "OB"))
 			running_on_batteries = true;
 	}
-	str_vector_free (&v);
+	strv_free (&v);
 
 	if (running_on_batteries || strcmp (charge, "100"))
-		str_vector_add_owned (&items, xstrdup_printf ("%s%%", charge));
+		strv_append_owned (&items, xstrdup_printf ("%s%%", charge));
 	if (running_on_batteries)
-		str_vector_add_owned (&items, interval_string (runtime_sec));
+		strv_append_owned (&items, interval_string (runtime_sec));
 
 	// Only show load if it's higher than the threshold so as to not distract
 	const char *threshold = str_map_find (&ctx->config, "nut_load_thld");
@@ -1788,7 +1773,7 @@ nut_process_ups (struct app_context *ctx, struct str_vector *ups_list,
 		if (power && xstrtoul (&power_n, power, 10))
 			str_append_printf (&item, " (~%luW)", power_n * load_n / 100);
 
-		str_vector_add_owned (&items, str_steal (&item));
+		strv_append_owned (&items, str_steal (&item));
 	}
 
 	struct str result;
@@ -1800,8 +1785,8 @@ nut_process_ups (struct app_context *ctx, struct str_vector *ups_list,
 		if (i) str_append (&result, "; ");
 		str_append (&result, items.vector[i]);
 	}
-	str_vector_free (&items);
-	str_vector_add_owned (ups_list, str_steal (&result));
+	strv_free (&items);
+	strv_append_owned (ups_list, str_steal (&result));
 }
 
 static void
@@ -1811,8 +1796,8 @@ nut_on_logout_response (const struct nut_response *response, void *user_data)
 		return;
 
 	struct app_context *ctx = user_data;
-	struct str_vector ups_list;
-	str_vector_init (&ups_list);
+	struct strv ups_list;
+	strv_init (&ups_list);
 
 	struct str_map_iter iter;
 	str_map_iter_init (&iter, &ctx->nut_ups_info);
@@ -1834,7 +1819,7 @@ nut_on_logout_response (const struct nut_response *response, void *user_data)
 	}
 
 	ctx->nut_success = true;
-	str_vector_free (&ups_list);
+	strv_free (&ups_list);
 	refresh_status (ctx);
 }
 
@@ -1862,7 +1847,7 @@ nut_on_var_response (const struct nut_response *response, void *user_data)
 	struct app_context *ctx = user_data;
 	LIST_FOR_EACH (struct nut_line, iter, response->data)
 	{
-		const struct str_vector *fields = &iter->fields;
+		const struct strv *fields = &iter->fields;
 		if (!soft_assert (fields->len >= 4
 		 && !strcmp (fields->vector[0], "VAR")))
 			continue;
@@ -1884,7 +1869,7 @@ nut_on_list_ups_response (const struct nut_response *response, void *user_data)
 	// Then we list all their properties and terminate the connection
 	LIST_FOR_EACH (struct nut_line, iter, response->data)
 	{
-		const struct str_vector *fields = &iter->fields;
+		const struct strv *fields = &iter->fields;
 		if (!soft_assert (fields->len >= 2
 		 && !strcmp (fields->vector[0], "UPS")))
 			continue;
@@ -1982,13 +1967,13 @@ on_sink_info (pa_context *context, const pa_sink_info *info, int eol,
 		ctx->sink_volume = info->volume;
 		ctx->sink_muted = !!info->mute;
 
-		str_vector_reset (&ctx->sink_ports);
+		strv_reset (&ctx->sink_ports);
 		free (ctx->sink_port_active);
 		ctx->sink_port_active = NULL;
 
 		if (info->ports)
 			for (struct pa_sink_port_info **iter = info->ports; *iter; iter++)
-				str_vector_add (&ctx->sink_ports, (*iter)->name);
+				strv_append (&ctx->sink_ports, (*iter)->name);
 		if (info->active_port)
 			ctx->sink_port_active = xstrdup (info->active_port->name);
 
