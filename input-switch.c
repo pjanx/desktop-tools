@@ -145,7 +145,7 @@ main (int argc, char *argv[])
 		 && g_inputs[i].index == (int) index)
 			input_source = g_inputs[i].code;
 	if (!input_source)
-		exit_fatal ("unknown input_source: %s %lu", argv[1], index);
+		exit_fatal ("unknown input source: %s %lu", argv[1], index);
 
 	i2c (input_source);
 	return 0;
