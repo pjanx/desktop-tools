@@ -9,6 +9,7 @@ to other people as well:
    includes PulseAudio volume management and hand-written NUT and MPD clients,
    all in the name of liberation from GPL-licensed software of course.
  - 'brightness' allows me to change the brightness of w/e display device I have.
+ - 'input-switch' likewise switches the input source of external displays.
  - 'fancontrol-ng' is a clone of fancontrol that can handle errors on resume
    from suspend instead of setting fans to maximum speed and quitting;
    in general it doesn't handle everything the original does

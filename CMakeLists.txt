@@ -42,6 +42,9 @@ add_threads (wmstatus)
 add_executable (brightness brightness.c)
 target_link_libraries (brightness ${project_libraries})
 
+add_executable (input-switch input-switch.c)
+target_link_libraries (input-switch ${project_libraries})
+
 add_executable (fancontrol-ng fancontrol-ng.c)
 target_link_libraries (fancontrol-ng ${project_libraries})
 
@@ -76,7 +79,7 @@ if (WITH_GDM)
 	install (TARGETS gdm-switch-user DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif (WITH_GDM)
 
-install (TARGETS wmstatus brightness fancontrol-ng siprandom
+install (TARGETS wmstatus brightness input-switch fancontrol-ng siprandom
 	DESTINATION ${CMAKE_INSTALL_BINDIR})
 install (PROGRAMS shellify DESTINATION ${CMAKE_INSTALL_BINDIR})
 install (FILES LICENSE DESTINATION ${CMAKE_INSTALL_DOCDIR})
