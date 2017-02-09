@@ -45,7 +45,7 @@ xstrtol (const char *s, long *out)
 static bool
 set_brightness (int fd, long diff, struct error **e)
 {
-	struct vcp_feature_readout readout;
+	struct vcp_feature_readout readout = {};
 	if (!vcp_get_feature (fd, VCP_BRIGHTNESS, &readout, e))
 		return false;
 

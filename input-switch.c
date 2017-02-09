@@ -34,7 +34,7 @@
 static bool
 set_input_source (int fd, int input, struct error **e)
 {
-	struct vcp_feature_readout readout;
+	struct vcp_feature_readout readout = {};
 	if (!vcp_get_feature (fd, VCP_INPUT_SOURCE, &readout, e))
 		return false;
 	if (input < 0 || input > readout.max)
