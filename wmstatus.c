@@ -2200,6 +2200,14 @@ on_lock (struct app_context *ctx, int arg)
 }
 
 static void
+on_input_switch (struct app_context *ctx, int arg)
+{
+	char *values[] = { "vga", "dvi", "dp", "hdmi" };
+	char *argv[] = { "input-switch", values[arg], NULL };
+	spawn (ctx, argv);
+}
+
+static void
 on_brightness (struct app_context *ctx, int arg)
 {
 	char *value = xstrdup_printf ("%d", arg);
@@ -2234,6 +2242,12 @@ g_keys[] =
 	/* xmodmap | grep -e Alt_R -e Meta_R -e ISO_Level3_Shift -e Mode_switch */
 	{ Mod4Mask | Mod5Mask, XK_Left,      on_mpd_backward,      0 },
 	{ Mod4Mask | Mod5Mask, XK_Right,     on_mpd_forward,       0 },
+
+	// Display input sources
+	{ Mod4Mask,            XK_F5,        on_input_switch,      0 },
+	{ Mod4Mask,            XK_F6,        on_input_switch,      1 },
+	{ Mod4Mask,            XK_F7,        on_input_switch,      2 },
+	{ Mod4Mask,            XK_F8,        on_input_switch,      3 },
 
 	// Keyboard groups
 	{ Mod4Mask,            XK_F9,        on_lock_group,        0 },
