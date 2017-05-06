@@ -1,7 +1,7 @@
 /*
  * wmstatus.c: simple PulseAudio-enabled status setter for dwm and i3
  *
- * Copyright (c) 2015 - 2016, Přemysl Janouch <p.janouch@gmail.com>
+ * Copyright (c) 2015 - 2017, Přemysl Janouch <p.janouch@gmail.com>
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -1210,6 +1210,7 @@ app_context_init (struct app_context *self)
 	poller_init (&self->poller);
 	self->api = poller_pa_new (&self->poller);
 
+	set_cloexec (ConnectionNumber (self->dpy));
 	poller_fd_init (&self->x_event, &self->poller,
 		ConnectionNumber (self->dpy));
 
@@ -2072,16 +2073,10 @@ on_make_context (void *user_data)
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
 static void
-spawn (struct app_context *ctx, char *argv[])
+spawn (char *argv[])
 {
 	posix_spawn_file_actions_t actions;
 	posix_spawn_file_actions_init (&actions);
-
-	posix_spawn_file_actions_addclose (&actions, ConnectionNumber (ctx->dpy));
-	if (ctx->mpd_client.socket != -1)
-		posix_spawn_file_actions_addclose (&actions, ctx->mpd_client.socket);
-	if (ctx->nut_client.socket != -1)
-		posix_spawn_file_actions_addclose (&actions, ctx->nut_client.socket);
 
 	// That would mess up our JSON
 	posix_spawn_file_actions_addopen
@@ -2190,29 +2185,32 @@ on_volume_set (struct app_context *ctx, int arg)
 static void
 on_lock (struct app_context *ctx, int arg)
 {
+	(void) ctx;
 	(void) arg;
 
 	// One of these will work
 	char *argv_gdm[] = { "gdm-switch-user", NULL };
-	spawn (ctx, argv_gdm);
+	spawn (argv_gdm);
 	char *argv_ldm[] = { "dm-tool", "lock", NULL };
-	spawn (ctx, argv_ldm);
+	spawn (argv_ldm);
 }
 
 static void
 on_input_switch (struct app_context *ctx, int arg)
 {
+	(void) ctx;
 	char *values[] = { "vga", "dvi", "dp", "hdmi" };
 	char *argv[] = { "input-switch", values[arg], NULL };
-	spawn (ctx, argv);
+	spawn (argv);
 }
 
 static void
 on_brightness (struct app_context *ctx, int arg)
 {
+	(void) ctx;
 	char *value = xstrdup_printf ("%d", arg);
 	char *argv[] = { "brightness", value, NULL };
-	spawn (ctx, argv);
+	spawn (argv);
 	free (value);
 }
 
