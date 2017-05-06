@@ -2082,14 +2082,8 @@ spawn (char *argv[])
 	posix_spawn_file_actions_addopen
 		(&actions, STDOUT_FILENO, "/dev/null", O_WRONLY, 0);
 
-	posix_spawnattr_t attr;
-	posix_spawnattr_init (&attr);
-	posix_spawnattr_setpgroup (&attr, 0);
-
-	posix_spawnp (NULL, argv[0], &actions, &attr, argv, environ);
-
+	posix_spawnp (NULL, argv[0], &actions, NULL, argv, environ);
 	posix_spawn_file_actions_destroy (&actions);
-	posix_spawnattr_destroy (&attr);
 }
 
 #define MPD_SIMPLE(name, ...)                              \
