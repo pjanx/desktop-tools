@@ -44,6 +44,8 @@
 
 // --- Utilities ---------------------------------------------------------------
 
+enum { PIPE_READ, PIPE_WRITE };
+
 static void
 log_message_custom (void *user_data, const char *quote, const char *fmt,
 	va_list ap)
@@ -1131,6 +1133,8 @@ static struct simple_config_item g_config_table[] =
 	// enhanced configuration format and allowing arbitrary per-UPS overrides
 	{ "nut_load_power",  NULL,              "ups.realpower.nominal override" },
 
+	{ "command",         NULL,              "command to run for more info"   },
+
 	{ NULL,              NULL,              NULL                             }
 };
 
@@ -1149,6 +1153,15 @@ struct app_context
 	struct poller_timer time_changed;   ///< Time change timer
 	struct poller_timer make_context;   ///< Start PulseAudio communication
 	struct poller_timer refresh_rest;   ///< Refresh unpollable information
+
+	// Command:
+
+	struct poller_timer command_start;  ///< Start the command
+	struct strv command_current;        ///< Current output of the command
+	pid_t command_pid;                  ///< PID of the command process
+	int command_fd;                     ///< I/O socket
+	struct poller_fd command_event;     ///< I/O event
+	struct str command_buffer;          ///< Unprocessed input
 
 	// Hotkeys:
 
@@ -1210,6 +1223,12 @@ app_context_init (struct app_context *self)
 	poller_init (&self->poller);
 	self->api = poller_pa_new (&self->poller);
 
+	strv_init (&self->command_current);
+	self->command_pid = -1;
+	self->command_fd = -1;
+	poller_fd_init (&self->command_event, &self->poller, -1);
+	str_init (&self->command_buffer);
+
 	set_cloexec (ConnectionNumber (self->dpy));
 	poller_fd_init (&self->x_event, &self->poller,
 		ConnectionNumber (self->dpy));
@@ -1235,8 +1254,15 @@ app_context_free (struct app_context *self)
 	if (self->context)  pa_context_unref (self->context);
 	if (self->dpy)      XCloseDisplay (self->dpy);
 
-	poller_pa_destroy (self->api);
-	poller_free (&self->poller);
+	strv_free (&self->command_current);
+	if (self->command_pid != -1)
+		(void) kill (self->command_pid, SIGTERM);
+	if (self->command_fd != -1)
+	{
+		poller_fd_reset (&self->command_event);
+		xclose (self->command_fd);
+	}
+	str_free (&self->command_buffer);
 
 	mpd_client_free (&self->mpd_client);
 	free (self->mpd_song);
@@ -1247,6 +1273,9 @@ app_context_free (struct app_context *self)
 
 	strv_free (&self->sink_ports);
 	free (self->sink_port_active);
+
+	poller_pa_destroy (self->api);
+	poller_free (&self->poller);
 }
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -1463,6 +1492,9 @@ refresh_status (struct app_context *ctx)
 	if (ctx->nut_status)    ctx->backend->add (ctx->backend, ctx->nut_status);
 	if (ctx->layout)        ctx->backend->add (ctx->backend, ctx->layout);
 
+	for (size_t i = 0; i < ctx->command_current.len; i++)
+		ctx->backend->add (ctx->backend, ctx->command_current.vector[i]);
+
 	char *times = make_time_status ("Week %V, %a %d %b %Y %H:%M %Z");
 	ctx->backend->add (ctx->backend, times);
 	free (times);
@@ -1490,6 +1522,108 @@ on_refresh_rest (void *user_data)
 
 	refresh_status (ctx);
 	poller_timer_set (&ctx->refresh_rest, 5000);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+static void
+command_queue_start (struct app_context *ctx)
+{
+	poller_timer_set (&ctx->command_start, 30 * 1000);
+}
+
+static void
+on_command_ready (const struct pollfd *pfd, void *user_data)
+{
+	struct app_context *ctx = user_data;
+	struct str *buf = &ctx->command_buffer;
+	enum socket_io_result result = socket_io_try_read (pfd->fd, buf);
+	bool data_have_changed = false;
+
+	size_t end = 0;
+	for (size_t i = 0; i + 1 < buf->len; i++)
+	{
+		if (buf->str[i] != '\n' || buf->str[i + 1] != '\n')
+			continue;
+
+		buf->str[i + 1] = '\0';
+		strv_reset (&ctx->command_current);
+		cstr_split (buf->str + end, "\n", true, &ctx->command_current);
+		end = i + 2;
+		data_have_changed = true;
+	}
+	str_remove_slice (buf, 0, end);
+
+	if (result != SOCKET_IO_OK)
+	{
+		// The pipe may have been closed independently
+		if (ctx->command_pid != -1)
+			(void) kill (ctx->command_pid, SIGTERM);
+
+		poller_fd_reset (&ctx->command_event);
+		xclose (ctx->command_fd);
+		ctx->command_fd = -1;
+		ctx->command_pid = -1;
+
+		// Make it obvious that something's not right here
+		strv_reset (&ctx->command_current);
+		data_have_changed = true;
+
+		print_error ("external command failed");
+		command_queue_start (ctx);
+	}
+	if (data_have_changed)
+		refresh_status (ctx);
+}
+
+static void
+on_command_start (void *user_data)
+{
+	struct app_context *ctx = user_data;
+	char *command = str_map_find (&ctx->config, "command");
+	if (!command)
+		return;
+
+	int output_pipe[2];
+	if (pipe (output_pipe))
+	{
+		print_error ("%s: %s", "pipe", strerror (errno));
+		command_queue_start (ctx);
+		return;
+	}
+
+	posix_spawn_file_actions_t actions;
+	posix_spawn_file_actions_init (&actions);
+	posix_spawn_file_actions_adddup2
+		(&actions, output_pipe[PIPE_WRITE], STDOUT_FILENO);
+	posix_spawn_file_actions_addclose (&actions, output_pipe[PIPE_READ]);
+	posix_spawn_file_actions_addclose (&actions, output_pipe[PIPE_WRITE]);
+
+	pid_t pid = -1;
+	char *argv[] = { "sh", "-c", command, NULL };
+	int result = posix_spawnp (&pid, argv[0], &actions, NULL, argv, environ);
+	posix_spawn_file_actions_destroy (&actions);
+
+	set_blocking (output_pipe[PIPE_READ], false);
+	set_cloexec (output_pipe[PIPE_READ]);
+	xclose (output_pipe[PIPE_WRITE]);
+
+	if (result)
+	{
+		xclose (output_pipe[PIPE_READ]);
+		print_error ("%s: %s", "posix_spawnp", strerror (result));
+		command_queue_start (ctx);
+		return;
+	}
+
+	ctx->command_pid = pid;
+	str_reset (&ctx->command_buffer);
+
+	poller_fd_init (&ctx->command_event, &ctx->poller,
+		(ctx->command_fd = output_pipe[PIPE_READ]));
+	ctx->command_event.dispatcher = on_command_ready;
+	ctx->command_event.user_data = ctx;
+	poller_fd_set (&ctx->command_event, POLLIN);
 }
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -1652,6 +1786,7 @@ mpd_on_io_hook (void *user_data, bool outgoing, const char *line)
 static void
 on_mpd_reconnect (void *user_data)
 {
+	// FIXME: the user should be able to disable MPD
 	struct app_context *ctx = user_data;
 
 	struct mpd_client *c = &ctx->mpd_client;
@@ -2363,6 +2498,68 @@ grab_keys (struct app_context *ctx)
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
+static int g_signal_pipe[2];            ///< A pipe used to signal... signals
+static struct poller_fd g_signal_event; ///< Signal pipe is readable
+
+static void
+on_sigchld (int sig)
+{
+	(void) sig;
+
+	int original_errno = errno;
+	if (write (g_signal_pipe[PIPE_WRITE], "c", 1) == -1)
+		soft_assert (errno == EAGAIN);
+	errno = original_errno;
+}
+
+static void
+on_signal_pipe_readable (const struct pollfd *pfd, struct app_context *ctx)
+{
+	char dummy;
+	(void) read (pfd->fd, &dummy, 1);
+
+	pid_t zombie;
+	while ((zombie = waitpid (-1, NULL, WNOHANG)))
+	{
+		// We want to know when this happens so that we don't accidentally
+		// try to kill an unrelated process on cleanup
+		if (ctx->command_pid == zombie)
+			ctx->command_pid = -1;
+		if (zombie == -1 && errno == ECHILD)
+			return;
+		if (zombie == -1)
+			hard_assert (errno == EINTR);
+	}
+}
+
+static void
+setup_signal_handlers (struct app_context *ctx)
+{
+	if (pipe (g_signal_pipe) == -1)
+		exit_fatal ("%s: %s", "pipe", strerror (errno));
+
+	set_cloexec (g_signal_pipe[PIPE_READ]);
+	set_cloexec (g_signal_pipe[PIPE_WRITE]);
+
+	// So that the pipe cannot overflow; it would make write() block within
+	// the signal handler, which is something we really don't want to happen.
+	// The same holds true for read().
+	set_blocking (g_signal_pipe[PIPE_READ],  false);
+	set_blocking (g_signal_pipe[PIPE_WRITE], false);
+
+	struct sigaction sa;
+	sa.sa_flags = SA_RESTART | SA_NOCLDSTOP;
+	sigemptyset (&sa.sa_mask);
+	sa.sa_handler = on_sigchld;
+	if (sigaction (SIGCHLD, &sa, NULL) == -1)
+		print_error ("%s: %s", "sigaction", strerror (errno));
+
+	poller_fd_init (&g_signal_event, &ctx->poller, g_signal_pipe[PIPE_READ]);
+	g_signal_event.dispatcher = (poller_fd_fn) on_signal_pipe_readable;
+	g_signal_event.user_data = ctx;
+	poller_fd_set (&g_signal_event, POLLIN);
+}
+
 static void
 poller_timer_init_and_set (struct poller_timer *self, struct poller *poller,
 	poller_timer_fn cb, void *user_data)
@@ -2425,17 +2622,10 @@ main (int argc, char *argv[])
 
 	opt_handler_free (&oh);
 
-	// We don't need to retrieve exit statuses of anything, avoid zombies
-	struct sigaction sa;
-	sa.sa_flags = SA_RESTART | SA_NOCLDWAIT;
-	sigemptyset (&sa.sa_mask);
-	sa.sa_handler = SIG_IGN;
-	if (sigaction (SIGCHLD, &sa, NULL) == -1)
-		print_error ("%s: %s", "sigaction", strerror (errno));
-
 	struct app_context ctx;
 	app_context_init (&ctx);
 	ctx.prefix = argc > 1 ? argv[1] : NULL;
+	setup_signal_handlers (&ctx);
 
 	struct error *e = NULL;
 	if (!simple_config_update_from_file (&ctx.config, &e))
@@ -2447,6 +2637,8 @@ main (int argc, char *argv[])
 		on_make_context, &ctx);
 	poller_timer_init_and_set (&ctx.refresh_rest, &ctx.poller,
 		on_refresh_rest, &ctx);
+	poller_timer_init_and_set (&ctx.command_start, &ctx.poller,
+		on_command_start, &ctx);
 	poller_timer_init_and_set (&ctx.mpd_reconnect, &ctx.poller,
 		on_mpd_reconnect, &ctx);
 	poller_timer_init_and_set (&ctx.nut_reconnect, &ctx.poller,
@@ -2465,6 +2657,7 @@ main (int argc, char *argv[])
 	if (ctx.backend->stop)
 		ctx.backend->stop (ctx.backend);
 
+	// We never get here since we don't even handle termination signals
 	app_context_free (&ctx);
 	return 0;
 }
