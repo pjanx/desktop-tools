@@ -2344,6 +2344,16 @@ on_brightness (struct app_context *ctx, int arg)
 }
 
 static void
+on_standby (struct app_context *ctx, int arg)
+{
+	(void) ctx;
+	(void) arg;
+
+	// We need to wait a little while until user releases the key
+	spawn ((char *[]) { "sh", "-c", "sleep 1; xset dpms force standby", NULL });
+}
+
+static void
 on_lock_group (struct app_context *ctx, int arg)
 {
 	XkbLockGroup (ctx->dpy, XkbUseCoreKbd, arg);
@@ -2387,6 +2397,8 @@ g_keys[] =
 	{ Mod4Mask,            XK_End,       on_brightness,      -10 },
 	{ 0, XF86XK_MonBrightnessUp,         on_brightness,       10 },
 	{ 0, XF86XK_MonBrightnessDown,       on_brightness,      -10 },
+
+	{ Mod4Mask,            XK_Pause,     on_standby,           0 },
 
 	// Volume
 	{ Mod4Mask,            XK_Insert,    on_volume_switch,     0 },
