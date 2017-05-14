@@ -42,6 +42,8 @@
 #include <pulse/introspect.h>
 #include <pulse/subscribe.h>
 
+#include <dbus/dbus.h>
+
 // --- Utilities ---------------------------------------------------------------
 
 enum { PIPE_READ, PIPE_WRITE };
@@ -1168,6 +1170,12 @@ struct app_context
 	struct poller_fd x_event;           ///< X11 event
 	char *layout;                       ///< Keyboard layout
 
+	// Insomnia:
+
+	DBusConnection *system_bus;         ///< System bus connection
+	char *insomnia_info;                ///< Status message (possibly error)
+	int insomnia_fd;                    ///< Inhibiting file descriptor
+
 	// MPD:
 
 	struct poller_timer mpd_reconnect;  ///< Start MPD communication
@@ -1233,6 +1241,16 @@ app_context_init (struct app_context *self)
 	poller_fd_init (&self->x_event, &self->poller,
 		ConnectionNumber (self->dpy));
 
+	// So far we don't necessarily need DBus to function,
+	// and we have no desire to process any incoming messages either
+	DBusError err = DBUS_ERROR_INIT;
+	self->insomnia_fd = -1;
+	if (!(self->system_bus = dbus_bus_get (DBUS_BUS_SYSTEM, &err)))
+	{
+		print_error ("dbus: %s", err.message);
+		dbus_error_free (&err);
+	}
+
 	mpd_client_init (&self->mpd_client, &self->poller);
 
 	nut_client_init (&self->nut_client, &self->poller);
@@ -1263,6 +1281,10 @@ app_context_free (struct app_context *self)
 		xclose (self->command_fd);
 	}
 	str_free (&self->command_buffer);
+
+	free (self->insomnia_info);
+	if (self->insomnia_fd != -1)
+		xclose (self->insomnia_fd);
 
 	mpd_client_free (&self->mpd_client);
 	free (self->mpd_song);
@@ -1491,6 +1513,9 @@ refresh_status (struct app_context *ctx)
 
 	if (ctx->nut_status)    ctx->backend->add (ctx->backend, ctx->nut_status);
 	if (ctx->layout)        ctx->backend->add (ctx->backend, ctx->layout);
+
+	if (ctx->insomnia_info)
+		ctx->backend->add (ctx->backend, ctx->insomnia_info);
 
 	for (size_t i = 0; i < ctx->command_current.len; i++)
 		ctx->backend->add (ctx->backend, ctx->command_current.vector[i]);
@@ -2354,6 +2379,75 @@ on_standby (struct app_context *ctx, int arg)
 }
 
 static void
+go_insomniac (struct app_context *ctx)
+{
+	static const char *what = "sleep:idle";
+	static const char *who = PROGRAM_NAME;
+	static const char *why = "";
+	static const char *mode = "block";
+
+	if (!ctx->system_bus)
+	{
+		ctx->insomnia_info = xstrdup_printf ("%s: %s", "Insomnia", "no DBus");
+		return;
+	}
+
+	DBusMessage *msg = dbus_message_new_method_call
+		("org.freedesktop.login1", "/org/freedesktop/login1",
+		"org.freedesktop.login1.Manager", "Inhibit");
+	hard_assert (msg != NULL);
+
+	hard_assert (dbus_message_append_args (msg,
+		DBUS_TYPE_STRING, &what,
+		DBUS_TYPE_STRING, &who,
+		DBUS_TYPE_STRING, &why,
+		DBUS_TYPE_STRING, &mode,
+		DBUS_TYPE_INVALID));
+
+	DBusError err = DBUS_ERROR_INIT;
+	DBusMessage *reply = dbus_connection_send_with_reply_and_block
+		(ctx->system_bus, msg, 1000, &err);
+	dbus_message_unref (msg);
+	if (!reply)
+	{
+		ctx->insomnia_info = xstrdup_printf ("%s: %s", "Insomnia", err.message);
+		dbus_error_free (&err);
+	}
+	else if (!dbus_message_get_args (reply, &err,
+		DBUS_TYPE_UNIX_FD, &ctx->insomnia_fd, DBUS_TYPE_INVALID))
+	{
+		dbus_message_unref (reply);
+		ctx->insomnia_info = xstrdup_printf ("%s: %s", "Insomnia", err.message);
+		dbus_error_free (&err);
+	}
+	else
+	{
+		dbus_message_unref (reply);
+		ctx->insomnia_info = xstrdup ("Insomniac");
+		set_cloexec (ctx->insomnia_fd);
+	}
+}
+
+static void
+on_insomnia (struct app_context *ctx, int arg)
+{
+	(void) arg;
+	free (ctx->insomnia_info);
+	ctx->insomnia_info = NULL;
+
+	// Get rid of the lock if we hold one, establish it otherwise
+	if (ctx->insomnia_fd != -1)
+	{
+		xclose (ctx->insomnia_fd);
+		ctx->insomnia_fd = -1;
+	}
+	else
+		go_insomniac (ctx);
+
+	refresh_status (ctx);
+}
+
+static void
 on_lock_group (struct app_context *ctx, int arg)
 {
 	XkbLockGroup (ctx->dpy, XkbUseCoreKbd, arg);
@@ -2369,48 +2463,49 @@ struct
 g_keys[] =
 {
 	// This key should be labeled L on normal Qwert[yz] layouts
-	{ Mod4Mask,            XK_n,         on_lock,              0 },
+	{ Mod4Mask,             XK_n,         on_lock,              0 },
 
 	// MPD
-	{ Mod4Mask,            XK_Up,        on_mpd_play,          0 },
-	{ Mod4Mask,            XK_Down,      on_mpd_stop,          0 },
-	{ Mod4Mask,            XK_Left,      on_mpd_prev,          0 },
-	{ Mod4Mask,            XK_Right,     on_mpd_next,          0 },
+	{ Mod4Mask,             XK_Up,        on_mpd_play,          0 },
+	{ Mod4Mask,             XK_Down,      on_mpd_stop,          0 },
+	{ Mod4Mask,             XK_Left,      on_mpd_prev,          0 },
+	{ Mod4Mask,             XK_Right,     on_mpd_next,          0 },
 	/* xmodmap | grep -e Alt_R -e Meta_R -e ISO_Level3_Shift -e Mode_switch */
-	{ Mod4Mask | Mod5Mask, XK_Left,      on_mpd_backward,      0 },
-	{ Mod4Mask | Mod5Mask, XK_Right,     on_mpd_forward,       0 },
+	{ Mod4Mask | Mod5Mask,  XK_Left,      on_mpd_backward,      0 },
+	{ Mod4Mask | Mod5Mask,  XK_Right,     on_mpd_forward,       0 },
 
 	// Display input sources
-	{ Mod4Mask,            XK_F5,        on_input_switch,      0 },
-	{ Mod4Mask,            XK_F6,        on_input_switch,      1 },
-	{ Mod4Mask,            XK_F7,        on_input_switch,      2 },
-	{ Mod4Mask,            XK_F8,        on_input_switch,      3 },
+	{ Mod4Mask,             XK_F5,        on_input_switch,      0 },
+	{ Mod4Mask,             XK_F6,        on_input_switch,      1 },
+	{ Mod4Mask,             XK_F7,        on_input_switch,      2 },
+	{ Mod4Mask,             XK_F8,        on_input_switch,      3 },
 
 	// Keyboard groups
-	{ Mod4Mask,            XK_F9,        on_lock_group,        0 },
-	{ Mod4Mask,            XK_F10,       on_lock_group,        1 },
-	{ Mod4Mask,            XK_F11,       on_lock_group,        2 },
-	{ Mod4Mask,            XK_F12,       on_lock_group,        3 },
+	{ Mod4Mask,             XK_F9,        on_lock_group,        0 },
+	{ Mod4Mask,             XK_F10,       on_lock_group,        1 },
+	{ Mod4Mask,             XK_F11,       on_lock_group,        2 },
+	{ Mod4Mask,             XK_F12,       on_lock_group,        3 },
 
 	// Brightness
-	{ Mod4Mask,            XK_Home,      on_brightness,       10 },
-	{ Mod4Mask,            XK_End,       on_brightness,      -10 },
+	{ Mod4Mask,             XK_Home,      on_brightness,       10 },
+	{ Mod4Mask,             XK_End,       on_brightness,      -10 },
 	{ 0, XF86XK_MonBrightnessUp,         on_brightness,       10 },
 	{ 0, XF86XK_MonBrightnessDown,       on_brightness,      -10 },
 
-	{ Mod4Mask,            XK_Pause,     on_standby,           0 },
+	{ Mod4Mask,             XK_Pause,     on_standby,           0 },
+	{ Mod4Mask | ShiftMask, XK_Pause,     on_insomnia,          0 },
 
 	// Volume
-	{ Mod4Mask,            XK_Insert,    on_volume_switch,     0 },
-	{ Mod4Mask,            XK_Delete,    on_volume_mute,       0 },
-	{ Mod4Mask,            XK_Page_Up,   on_volume_set,        5 },
-	{ Mod4Mask | Mod5Mask, XK_Page_Up,   on_volume_set,        1 },
-	{ Mod4Mask,            XK_Page_Down, on_volume_set,       -5 },
-	{ Mod4Mask | Mod5Mask, XK_Page_Down, on_volume_set,       -1 },
-	{ 0, XF86XK_AudioMicMute,            on_volume_mic_mute,   0 },
-	{ 0, XF86XK_AudioMute,               on_volume_mute,       0 },
-	{ 0, XF86XK_AudioRaiseVolume,        on_volume_set,        5 },
-	{ 0, XF86XK_AudioLowerVolume,        on_volume_set,       -5 },
+	{ Mod4Mask,             XK_Insert,    on_volume_switch,     0 },
+	{ Mod4Mask,             XK_Delete,    on_volume_mute,       0 },
+	{ Mod4Mask,             XK_Page_Up,   on_volume_set,        5 },
+	{ Mod4Mask | Mod5Mask,  XK_Page_Up,   on_volume_set,        1 },
+	{ Mod4Mask,             XK_Page_Down, on_volume_set,       -5 },
+	{ Mod4Mask | Mod5Mask,  XK_Page_Down, on_volume_set,       -1 },
+	{ 0, XF86XK_AudioMicMute,             on_volume_mic_mute,   0 },
+	{ 0, XF86XK_AudioMute,                on_volume_mute,       0 },
+	{ 0, XF86XK_AudioRaiseVolume,         on_volume_set,        5 },
+	{ 0, XF86XK_AudioLowerVolume,         on_volume_set,       -5 },
 };
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -

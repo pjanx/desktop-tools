@@ -22,7 +22,7 @@ set (CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/liberty/cmake)
 include (AddThreads)
 
 find_package (PkgConfig REQUIRED)
-pkg_check_modules (dependencies REQUIRED libpulse x11 xext xextproto)
+pkg_check_modules (dependencies REQUIRED libpulse x11 xext xextproto dbus-1)
 pkg_check_modules (gdm gdm glib-2.0 gio-2.0)
 
 option (WITH_GDM "Compile with GDM support" ${gdm_FOUND})

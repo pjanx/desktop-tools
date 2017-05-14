@@ -36,7 +36,7 @@ https://build.opensuse.org/project/repositories/home:pjanouch:git
 Building
 --------
 Build dependencies: CMake, pkg-config, liberty (included) +
-Runtime dependencies: libpulse, libx11, libgdm (optional)
+Runtime dependencies: libpulse, libx11, dbus-1, libgdm (optional)
 
  $ git clone --recursive https://github.com/pjanouch/desktop-tools.git
  $ mkdir desktop-tools/build
@@ -58,6 +58,8 @@ Contributing and Support
 Use this project's GitHub to report any bugs, request features, or submit pull
 requests.  If you want to discuss this project, or maybe just hang out with
 the developer, feel free to join me at irc://irc.janouch.name, channel #dev.
+
+Bitcoin donations: 12r5uEWEgcHC46xd64tt3hHt9EUvYYDHe9
 
 License
 -------
