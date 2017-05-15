@@ -35,6 +35,7 @@
 #include <X11/keysym.h>
 #include <X11/XF86keysym.h>
 #include <X11/XKBlib.h>
+#include <X11/extensions/sync.h>
 
 #include <pulse/mainloop.h>
 #include <pulse/context.h>
@@ -1136,7 +1137,7 @@ static struct simple_config_item g_config_table[] =
 	{ "nut_load_power",  NULL,              "ups.realpower.nominal override" },
 
 	{ "command",         NULL,              "command to run for more info"   },
-
+	{ "sleep_timer",     NULL,              "idle seconds to suspend after"  },
 	{ NULL,              NULL,              NULL                             }
 };
 
@@ -1148,13 +1149,22 @@ struct app_context
 	struct backend *backend;            ///< WM backend
 
 	Display *dpy;                       ///< X display handle
-	int xkb_base_event_code;            ///< Xkb base event code
+	struct poller_fd x_event;           ///< X11 event
 	const char *prefix;                 ///< User-defined prefix
 
 	struct poller poller;               ///< Poller
 	struct poller_timer time_changed;   ///< Time change timer
 	struct poller_timer make_context;   ///< Start PulseAudio communication
 	struct poller_timer refresh_rest;   ///< Refresh unpollable information
+
+	// Sleep timer:
+
+	int xsync_base_event_code;          ///< XSync base event code
+	XSyncCounter idle_counter;          ///< XSync IDLETIME counter
+	XSyncValue idle_timeout;            ///< Sleep timeout
+
+	XSyncAlarm idle_alarm_inactive;     ///< User is inactive
+	XSyncAlarm idle_alarm_active;       ///< User is active
 
 	// Command:
 
@@ -1167,7 +1177,7 @@ struct app_context
 
 	// Hotkeys:
 
-	struct poller_fd x_event;           ///< X11 event
+	int xkb_base_event_code;            ///< Xkb base event code
 	char *layout;                       ///< Keyboard layout
 
 	// Insomnia:
@@ -1216,6 +1226,29 @@ str_map_destroy (void *self)
 }
 
 static void
+app_context_init_xsync (struct app_context *self)
+{
+	int n;
+	if (!XSyncQueryExtension (self->dpy, &self->xsync_base_event_code, &n)
+	 || !XSyncInitialize (self->dpy, &n, &n))
+	{
+		print_error ("cannot initialize XSync");
+		return;
+	}
+
+	// The idle counter is not guaranteed to exist, only SERVERTIME is
+	XSyncSystemCounter *counters = XSyncListSystemCounters (self->dpy, &n);
+	while (n--)
+	{
+		if (!strcmp (counters[n].name, "IDLETIME"))
+			self->idle_counter = counters[n].counter;
+	}
+	if (!self->idle_counter)
+		print_error ("idle counter is missing");
+	XSyncFreeSystemCounterList (counters);
+}
+
+static void
 app_context_init (struct app_context *self)
 {
 	memset (self, 0, sizeof *self);
@@ -1240,6 +1273,8 @@ app_context_init (struct app_context *self)
 	set_cloexec (ConnectionNumber (self->dpy));
 	poller_fd_init (&self->x_event, &self->poller,
 		ConnectionNumber (self->dpy));
+
+	app_context_init_xsync (self);
 
 	// So far we don't necessarily need DBus to function,
 	// and we have no desire to process any incoming messages either
@@ -1547,6 +1582,77 @@ on_refresh_rest (void *user_data)
 
 	refresh_status (ctx);
 	poller_timer_set (&ctx->refresh_rest, 5000);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+static void
+suspend (struct app_context *ctx)
+{
+	DBusMessage *msg = dbus_message_new_method_call
+		("org.freedesktop.login1", "/org/freedesktop/login1",
+		"org.freedesktop.login1.Manager", "Suspend");
+	hard_assert (msg != NULL);
+
+	dbus_bool_t interactive = false;
+	hard_assert (dbus_message_append_args (msg,
+		DBUS_TYPE_BOOLEAN, &interactive,
+		DBUS_TYPE_INVALID));
+
+	DBusError err = DBUS_ERROR_INIT;
+	DBusMessage *reply = dbus_connection_send_with_reply_and_block
+		(ctx->system_bus, msg, 1000, &err);
+	dbus_message_unref (msg);
+	if (!reply)
+	{
+		print_error ("%s: %s", "suspend", err.message);
+		dbus_error_free (&err);
+	}
+	else
+		dbus_message_unref (reply);
+}
+
+static void
+set_idle_alarm (struct app_context *ctx,
+	XSyncAlarm *alarm, XSyncTestType test, XSyncValue value)
+{
+	XSyncAlarmAttributes attr;
+	attr.trigger.counter = ctx->idle_counter;
+	attr.trigger.test_type = test;
+	attr.trigger.wait_value = value;
+	XSyncIntToValue (&attr.delta, 0);
+
+	long flags = XSyncCACounter | XSyncCATestType | XSyncCAValue | XSyncCADelta;
+	if (*alarm)
+		XSyncChangeAlarm (ctx->dpy, *alarm, flags, &attr);
+	else
+		*alarm = XSyncCreateAlarm (ctx->dpy, flags, &attr);
+}
+
+static void
+on_x_alarm_notify (struct app_context *ctx, XSyncAlarmNotifyEvent *ev)
+{
+	if (ev->alarm == ctx->idle_alarm_inactive)
+	{
+		// Our own lock doesn't matter, we have to check it ourselves
+		if (ctx->system_bus && ctx->insomnia_fd == -1)
+			suspend (ctx);
+
+		XSyncValue one, minus_one;
+		XSyncIntToValue (&one, 1);
+
+		Bool overflow;
+		XSyncValueSubtract (&minus_one, ev->counter_value, one, &overflow);
+
+		// Set an alarm for IDLETIME <= current_idletime - 1
+		set_idle_alarm (ctx, &ctx->idle_alarm_active,
+			XSyncNegativeComparison, minus_one);
+	}
+	else if (ev->alarm == ctx->idle_alarm_active)
+		// XXX: even though it doesn't seem to run during the time the system
+		//   is suspended, I haven't found any place where it is specified
+		set_idle_alarm (ctx, &ctx->idle_alarm_inactive,
+			XSyncPositiveComparison, ctx->idle_timeout);
 }
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -2386,12 +2492,6 @@ go_insomniac (struct app_context *ctx)
 	static const char *why = "";
 	static const char *mode = "block";
 
-	if (!ctx->system_bus)
-	{
-		ctx->insomnia_info = xstrdup_printf ("%s: %s", "Insomnia", "no DBus");
-		return;
-	}
-
 	DBusMessage *msg = dbus_message_new_method_call
 		("org.freedesktop.login1", "/org/freedesktop/login1",
 		"org.freedesktop.login1.Manager", "Inhibit");
@@ -2441,7 +2541,7 @@ on_insomnia (struct app_context *ctx, int arg)
 		xclose (ctx->insomnia_fd);
 		ctx->insomnia_fd = -1;
 	}
-	else
+	else if (ctx->system_bus)
 		go_insomniac (ctx);
 
 	refresh_status (ctx);
@@ -2556,6 +2656,8 @@ on_xkb_event (struct app_context *ctx, XkbEvent *ev)
 	refresh_status (ctx);
 }
 
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
 static void
 on_x_ready (const struct pollfd *pfd, void *user_data)
 {
@@ -2569,14 +2671,28 @@ on_x_ready (const struct pollfd *pfd, void *user_data)
 			exit_fatal ("XNextEvent returned non-zero");
 		if (ev.type == KeyPress)
 			on_x_keypress (ctx, &ev.core);
-		if (ev.type == ctx->xkb_base_event_code)
+		else if (ev.type == ctx->xkb_base_event_code)
 			on_xkb_event (ctx, &ev);
+		else if (ctx->xsync_base_event_code
+			&& ev.type == ctx->xsync_base_event_code + XSyncAlarmNotify)
+			on_x_alarm_notify (ctx, (XSyncAlarmNotifyEvent *) &ev);
 	}
 }
 
 static void
-grab_keys (struct app_context *ctx)
+init_xlib_events (struct app_context *ctx)
 {
+	unsigned long n;
+	const char *sleep_timer = str_map_find (&ctx->config, "sleep_timer");
+	if (sleep_timer && ctx->idle_counter)
+	{
+		if (!xstrtoul (&n, sleep_timer, 10) || !n || n > INT_MAX / 1000)
+			exit_fatal ("invalid value for the sleep timer");
+		XSyncIntToValue (&ctx->idle_timeout, n * 1000);
+		set_idle_alarm (ctx, &ctx->idle_alarm_inactive,
+			XSyncPositiveComparison, ctx->idle_timeout);
+	}
+
 	unsigned ignored_locks =
 		LockMask | XkbKeysymToModifiers (ctx->dpy, XK_Num_Lock);
 	hard_assert (XkbSetIgnoreLockMods
@@ -2751,7 +2867,7 @@ main (int argc, char *argv[])
 	poller_timer_init_and_set (&ctx.nut_reconnect, &ctx.poller,
 		on_nut_reconnect, &ctx);
 
-	grab_keys (&ctx);
+	init_xlib_events (&ctx);
 
 	if (i3bar)
 		ctx.backend = backend_i3_new ();
