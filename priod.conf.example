@@ -1,0 +1,9 @@
+# The command name can be a basename or a full path
+"Xorg" = {
+	# OOM killer favorization (-1000..1000)
+	oom_score_adj = -500
+	# CPU scheduling priority (-20..19)
+	prio = -5
+	# I/O scheduling priority (0..7)
+	ioprio = 0
+}

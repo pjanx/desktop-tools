@@ -72,13 +72,19 @@ set (SYSTEMD_UNITDIR /lib/systemd/system
 
 configure_file (${PROJECT_SOURCE_DIR}/fancontrol-ng.service.in
 	${PROJECT_BINARY_DIR}/fancontrol-ng.service @ONLY)
-# System-wide unit files should be installed under /lib and not /usr/lib
-install (FILES ${PROJECT_BINARY_DIR}/fancontrol-ng.service
-	DESTINATION "${SYSTEMD_UNITDIR}")
 install (FILES fancontrol-ng.conf.example
 	DESTINATION ${CMAKE_INSTALL_DATADIR}/fancontrol-ng)
 
-# TODO: priod is also going to need a systemd unit file
+configure_file (${PROJECT_SOURCE_DIR}/priod.service.in
+	${PROJECT_BINARY_DIR}/priod.service @ONLY)
+install (FILES priod.conf.example
+	DESTINATION ${CMAKE_INSTALL_DATADIR}/priod)
+
+# System-wide unit files should be installed under /lib and not /usr/lib
+install (FILES
+	${PROJECT_BINARY_DIR}/fancontrol-ng.service
+	${PROJECT_BINARY_DIR}/priod.service
+	DESTINATION "${SYSTEMD_UNITDIR}")
 
 if (WITH_GDM)
 	install (TARGETS gdm-switch-user DESTINATION ${CMAKE_INSTALL_BINDIR})

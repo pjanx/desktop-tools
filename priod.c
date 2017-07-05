@@ -522,6 +522,8 @@ main (int argc, char *argv[])
 	ctx.proc_event.user_data = &ctx;
 	poller_fd_set (&ctx.proc_event, POLLIN);
 
+	// TODO: iterate through current /proc processes and apply politics
+
 	ctx.polling = true;
 	while (ctx.polling)
 		poller_run (&ctx.poller);

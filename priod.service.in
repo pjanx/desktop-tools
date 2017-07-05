@@ -1,0 +1,9 @@
+[Unit]
+Description=priod
+
+[Service]
+ExecStart=@CMAKE_INSTALL_FULL_BINDIR@/priod @CMAKE_INSTALL_FULL_SYSCONFDIR@/priod.conf
+Restart=on-abort
+
+[Install]
+WantedBy=default.target
