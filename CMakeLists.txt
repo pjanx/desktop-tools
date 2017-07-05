@@ -48,6 +48,9 @@ target_link_libraries (input-switch ${project_libraries})
 add_executable (fancontrol-ng fancontrol-ng.c)
 target_link_libraries (fancontrol-ng ${project_libraries})
 
+add_executable (priod priod.c)
+target_link_libraries (priod ${project_libraries})
+
 if (WITH_GDM)
 	include_directories (${gdm_INCLUDE_DIRS})
 	add_executable (gdm-switch-user gdm-switch-user.c)
@@ -75,11 +78,13 @@ install (FILES ${PROJECT_BINARY_DIR}/fancontrol-ng.service
 install (FILES fancontrol-ng.conf.example
 	DESTINATION ${CMAKE_INSTALL_DATADIR}/fancontrol-ng)
 
+# TODO: priod is also going to need a systemd unit file
+
 if (WITH_GDM)
 	install (TARGETS gdm-switch-user DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif (WITH_GDM)
 
-install (TARGETS wmstatus brightness input-switch fancontrol-ng siprandom
+install (TARGETS wmstatus brightness input-switch fancontrol-ng priod siprandom
 	DESTINATION ${CMAKE_INSTALL_BINDIR})
 install (PROGRAMS shellify DESTINATION ${CMAKE_INSTALL_BINDIR})
 install (FILES LICENSE DESTINATION ${CMAKE_INSTALL_DOCDIR})
