@@ -320,6 +320,27 @@ on_exec (struct app_context *ctx, int pid)
 }
 
 static void
+preapply_rules (struct app_context *ctx)
+{
+	DIR *dir = opendir ("/proc");
+	if (!dir)
+	{
+		print_error ("opendir: %s: %s", "/proc", strerror (errno));
+		return;
+	}
+
+	// We don't care about processes deleted or created during this loop
+	struct dirent *iter;
+	while ((errno = 0, iter = readdir (dir)))
+	{
+		int pid = atoi (iter->d_name);
+		if (pid && (iter->d_type == DT_UNKNOWN || iter->d_type == DT_DIR))
+			on_exec (ctx, pid);
+	}
+	closedir (dir);
+}
+
+static void
 on_netlink_message (struct app_context *ctx, struct nlmsghdr *mh)
 {
 	// In practice the kernel connector never sends multipart messages
@@ -522,7 +543,11 @@ main (int argc, char *argv[])
 	ctx.proc_event.user_data = &ctx;
 	poller_fd_set (&ctx.proc_event, POLLIN);
 
-	// TODO: iterate through current /proc processes and apply politics
+	// While new events are being queued, we can apply rules to already
+	// existing processes, so that we don't miss anything except for obvious
+	// cases when a process re-execs to something else after a match.
+	// It would inherit the same values anyway, so it seems to be mostly okay.
+	preapply_rules (&ctx);
 
 	ctx.polling = true;
 	while (ctx.polling)
