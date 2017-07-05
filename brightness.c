@@ -121,8 +121,7 @@ read_value (int dir, const char *filename, struct error **e)
 		return -1;
 	}
 
-	struct str s;
-	str_init (&s);
+	struct str s = str_make ();
 
 	long value;
 	if (!read_line (fp, &s)
@@ -163,8 +162,7 @@ set_backlight (int dir, long diff, struct error **e)
 			"%s: %s: %s", "brightness", "openat", strerror (errno));
 	}
 
-	struct str s;
-	str_init (&s);
+	struct str s = str_make ();
 	str_append_printf (&s, "%ld", req);
 	bool result = write (fd, s.str, s.len) == (ssize_t) s.len;
 	str_free (&s);

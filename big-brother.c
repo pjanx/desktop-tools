@@ -110,15 +110,14 @@ app_context_init (struct app_context *self)
 {
 	memset (self, 0, sizeof *self);
 
-	str_map_init (&self->config);
-	self->config.free = free;
+	self->config = str_map_make (free);
 	simple_config_load_defaults (&self->config, g_config_table);
 
 	if (!(self->dpy = XOpenDisplay (NULL)))
 		exit_fatal ("cannot open display");
 
 	poller_init (&self->poller);
-	poller_fd_init (&self->x_event, &self->poller,
+	self->x_event = poller_fd_make (&self->poller,
 		ConnectionNumber (self->dpy));
 
 	self->net_active_window =
@@ -372,8 +371,8 @@ main (int argc, char *argv[])
 		{ 0, NULL, NULL, 0, NULL }
 	};
 
-	struct opt_handler oh;
-	opt_handler_init (&oh, argc, argv, opts, NULL, "Activity tracker.");
+	struct opt_handler oh =
+		opt_handler_make (argc, argv, opts, NULL, "Activity tracker.");
 
 	int c;
 	while ((c = opt_handler_get (&oh)) != -1)

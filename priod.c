@@ -132,8 +132,7 @@ load_configuration (struct app_context *ctx, const char *config_path)
 		exit (EXIT_FAILURE);
 	}
 
-	struct str_map_iter iter;
-	str_map_iter_init (&iter, &root->value.object);
+	struct str_map_iter iter = str_map_iter_make (&root->value.object);
 	ctx->rules = xcalloc (iter.map->len, sizeof *ctx->rules);
 	ctx->rules_len = 0;
 
@@ -286,10 +285,8 @@ on_exec_name (struct app_context *ctx, int pid, const char *program_name)
 		return;
 	}
 
-	struct str_map set;
-	str_map_init (&set);
-
 	// This has an inherent race condition, but let's give it a try
+	struct str_map set = str_map_make (NULL);
 	for (size_t retries = 3; retries--; )
 		if (reprioritize (pid, program_name, dir, rule, &set))
 			break;
@@ -303,8 +300,7 @@ on_exec (struct app_context *ctx, int pid)
 {
 	// This is inherently racy but there seems to be no better way to do it
 	char *path = xstrdup_printf ("/proc/%d/cmdline", pid);
-	struct str cmdline;
-	str_init (&cmdline);
+	struct str cmdline = str_make ();
 
 	struct error *e = NULL;
 	if (read_file (path, &cmdline, &e))
@@ -408,8 +404,7 @@ parse_program_arguments (int argc, char **argv)
 		{ 0, NULL, NULL, 0, NULL }
 	};
 
-	struct opt_handler oh;
-	opt_handler_init (&oh, argc, argv, opts, "CONFIG",
+	struct opt_handler oh = opt_handler_make (argc, argv, opts, "CONFIG",
 		"Process reprioritizing daemon.");
 
 	int c;
@@ -498,8 +493,8 @@ main (int argc, char *argv[])
 
 	setup_signal_handlers ();
 
-	struct poller_fd signal_event;
-	poller_fd_init (&signal_event, &ctx.poller, g_signal_pipe[0]);
+	struct poller_fd signal_event =
+		poller_fd_make (&ctx.poller, g_signal_pipe[0]);
 	signal_event.dispatcher = (poller_fd_fn) on_signal_pipe_readable;
 	signal_event.user_data = &ctx;
 	poller_fd_set (&signal_event, POLLIN);
@@ -538,7 +533,7 @@ main (int argc, char *argv[])
 	if (write (ctx.proc_fd, &subscription, sizeof subscription) < 0)
 		exit_fatal ("failed to subscribe for events: %s", strerror (errno));
 
-	poller_fd_init (&ctx.proc_event, &ctx.poller, ctx.proc_fd);
+	ctx.proc_event = poller_fd_make (&ctx.poller, ctx.proc_fd);
 	ctx.proc_event.dispatcher = (poller_fd_fn) on_event;
 	ctx.proc_event.user_data = &ctx;
 	poller_fd_set (&ctx.proc_event, POLLIN);

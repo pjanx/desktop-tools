@@ -64,8 +64,7 @@ log_message_custom (void *user_data, const char *quote, const char *fmt,
 static char *
 read_file_cstr (const char *path, struct error **e)
 {
-	struct str s;
-	str_init (&s);
+	struct str s = str_make ();
 	if (read_file (path, &s, e))
 		return str_steal (&s);
 	str_free (&s);
@@ -100,11 +99,9 @@ write_file_printf (const char *path, struct error **e, const char *format, ...)
 static bool
 write_file_printf (const char *path, struct error **e, const char *format, ...)
 {
-	struct str s;
-	str_init (&s);
-
 	va_list ap;
 	va_start (ap, format);
+	struct str s = str_make ();
 	str_append_vprintf (&s, format, ap);
 	va_end (ap);
 
@@ -334,8 +331,8 @@ struct pwm_iter
 static void
 pwm_iter_init (struct pwm_iter *self, struct device *device)
 {
-	str_map_iter_init (&self->object_iter,
-		&config_item_get (device->config, "pwms", NULL)->value.object);
+	self->object_iter = str_map_iter_make
+		(&config_item_get (device->config, "pwms", NULL)->value.object);
 	self->device = device;
 	self->paths = NULL;
 }
@@ -407,7 +404,7 @@ device_create (struct app_context *ctx, const char *path,
 	self->config = root;
 	self->path = xstrdup (path);
 
-	poller_timer_init (&self->timer, &ctx->poller);
+	self->timer = poller_timer_make (&ctx->poller);
 	self->timer.dispatcher = (poller_timer_fn) device_run;
 	self->timer.user_data = self;
 
@@ -463,9 +460,7 @@ check_device_configuration (struct config_item *subtree, struct error **e)
 		return error_set (e, "no PWMs defined");
 
 	// Check regular fields in all PWM subobjects
-	struct str_map_iter iter;
-	str_map_iter_init (&iter, &pwms->value.object);
-
+	struct str_map_iter iter = str_map_iter_make (&pwms->value.object);
 	struct config_item *pwm;
 	struct error *error = NULL;
 	while ((pwm = str_map_iter_next (&iter)))
@@ -500,8 +495,8 @@ load_configuration (struct app_context *ctx, const char *config_path)
 		exit (EXIT_FAILURE);
 	}
 
-	struct str_map_iter iter;
-	str_map_iter_init (&iter, &(ctx->config = root)->value.object);
+	struct str_map_iter iter =
+		str_map_iter_make (&(ctx->config = root)->value.object);
 
 	struct config_item *subtree;
 	while ((subtree = str_map_iter_next (&iter)))
@@ -580,8 +575,8 @@ parse_program_arguments (int argc, char **argv)
 		{ 0, NULL, NULL, 0, NULL }
 	};
 
-	struct opt_handler oh;
-	opt_handler_init (&oh, argc, argv, opts, "CONFIG", "Fan controller.");
+	struct opt_handler oh =
+		opt_handler_make (argc, argv, opts, "CONFIG", "Fan controller.");
 
 	int c;
 	while ((c = opt_handler_get (&oh)) != -1)
@@ -628,7 +623,7 @@ main (int argc, char *argv[])
 	setup_signal_handlers ();
 
 	struct poller_fd signal_event;
-	poller_fd_init (&signal_event, &ctx.poller, g_signal_pipe[0]);
+	signal_event = poller_fd_make (&ctx.poller, g_signal_pipe[0]);
 	signal_event.dispatcher = (poller_fd_fn) on_signal_pipe_readable;
 	signal_event.user_data = &ctx;
 	poller_fd_set (&signal_event, POLLIN);

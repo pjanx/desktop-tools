@@ -180,10 +180,9 @@ poller_pa_io_new (pa_mainloop_api *api, int fd_, pa_io_event_flags_t events,
 	self->user_data = userdata;
 
 	struct poller_pa *data = api->userdata;
-	struct poller_fd *fd = &self->fd;
-	poller_fd_init (fd, data->poller, fd_);
-	fd->user_data = self;
-	fd->dispatcher = poller_pa_io_dispatcher;
+	self->fd = poller_fd_make (data->poller, fd_);
+	self->fd.user_data = self;
+	self->fd.dispatcher = poller_pa_io_dispatcher;
 
 	// FIXME: under x2go PA tries to register twice for the same FD,
 	//   which fails with our curent poller implementation;
@@ -249,10 +248,9 @@ poller_pa_time_new (pa_mainloop_api *api, const struct timeval *tv,
 	self->user_data = userdata;
 
 	struct poller_pa *data = api->userdata;
-	struct poller_timer *timer = &self->timer;
-	poller_timer_init (timer, data->poller);
-	timer->user_data = self;
-	timer->dispatcher = poller_pa_time_dispatcher;
+	self->timer = poller_timer_make (data->poller);
+	self->timer.user_data = self;
+	self->timer.dispatcher = poller_pa_time_dispatcher;
 
 	poller_pa_time_restart (self, tv);
 	LIST_PREPEND (data->time_list, self);
@@ -296,12 +294,11 @@ poller_pa_defer_new (pa_mainloop_api *api,
 	self->user_data = userdata;
 
 	struct poller_pa *data = api->userdata;
-	struct poller_idle *idle = &self->idle;
-	poller_idle_init (idle, data->poller);
-	idle->user_data = self;
-	idle->dispatcher = poller_pa_defer_dispatcher;
+	self->idle = poller_idle_make (data->poller);
+	self->idle.user_data = self;
+	self->idle.dispatcher = poller_pa_defer_dispatcher;
 
-	poller_idle_set (idle);
+	poller_idle_set (&self->idle);
 	LIST_PREPEND (data->defer_list, self);
 	return self;
 }
@@ -441,8 +438,8 @@ static void
 nut_parser_init (struct nut_parser *self)
 {
 	self->state = NUT_STATE_START_LINE;
-	str_init (&self->current_field);
-	strv_init (&self->fields);
+	self->current_field = str_make ();
+	self->fields = strv_make ();
 }
 
 static void
@@ -621,12 +618,12 @@ nut_client_init (struct nut_client *self, struct poller *poller)
 	self->poller = poller;
 	self->socket = -1;
 
-	str_init (&self->read_buffer);
-	str_init (&self->write_buffer);
+	self->read_buffer = str_make ();
+	self->write_buffer = str_make ();
 
 	nut_parser_init (&self->parser);
 
-	poller_fd_init (&self->socket_event, poller, -1);
+	self->socket_event = poller_fd_make (poller, -1);
 }
 
 static void
@@ -751,8 +748,7 @@ nut_client_dispatch (struct nut_client *self, struct nut_response *response)
 static bool
 nut_client_parse_line (struct nut_client *self)
 {
-	struct str reconstructed;
-	str_init (&reconstructed);
+	struct str reconstructed = str_make ();
 	nut_client_serialize (self->parser.fields.vector, &reconstructed);
 	print_debug ("NUT >> %s", reconstructed.str);
 	str_free (&reconstructed);
@@ -772,7 +768,7 @@ nut_client_parse_line (struct nut_client *self)
 	else
 	{
 		struct nut_line *line = xcalloc (1, sizeof *line);
-		strv_init (&line->fields);
+		line->fields = strv_make ();
 		strv_append_vector (&line->fields, fields->vector);
 		LIST_APPEND_WITH_TAIL (self->data, self->data_tail, line);
 	}
@@ -861,8 +857,7 @@ static void nut_client_send_command
 static void
 nut_client_send_commandv (struct nut_client *self, char **commands)
 {
-	struct str line;
-	str_init (&line);
+	struct str line = str_make ();
 	nut_client_serialize (commands, &line);
 
 	print_debug ("NUT << %s", line.str);
@@ -876,8 +871,7 @@ nut_client_send_commandv (struct nut_client *self, char **commands)
 static void
 nut_client_send_command (struct nut_client *self, const char *command, ...)
 {
-	struct strv v;
-	strv_init (&v);
+	struct strv v = strv_make ();
 
 	va_list ap;
 	va_start (ap, command);
@@ -898,7 +892,7 @@ nut_client_finish_connection (struct nut_client *self, int socket)
 	self->socket = socket;
 	self->state = NUT_CONNECTED;
 
-	poller_fd_init (&self->socket_event, self->poller, self->socket);
+	self->socket_event = poller_fd_make (self->poller, self->socket);
 	self->socket_event.dispatcher = nut_client_on_ready;
 	self->socket_event.user_data = self;
 
@@ -1026,7 +1020,7 @@ backend_dwm_new (Display *dpy)
 	self->super.flush   = backend_dwm_flush;
 
 	self->dpy = dpy;
-	strv_init (&self->items);
+	self->items = strv_make ();
 	return &self->super;
 }
 
@@ -1116,7 +1110,7 @@ backend_i3_new (void)
 	self->super.add   = backend_i3_add;
 	self->super.flush = backend_i3_flush;
 
-	strv_init (&self->items);
+	self->items = strv_make ();
 	return &self->super;
 }
 
@@ -1253,8 +1247,7 @@ app_context_init (struct app_context *self)
 {
 	memset (self, 0, sizeof *self);
 
-	str_map_init (&self->config);
-	self->config.free = free;
+	self->config = str_map_make (free);
 	simple_config_load_defaults (&self->config, g_config_table);
 
 	if (!(self->dpy = XkbOpenDisplay
@@ -1264,15 +1257,15 @@ app_context_init (struct app_context *self)
 	poller_init (&self->poller);
 	self->api = poller_pa_new (&self->poller);
 
-	strv_init (&self->command_current);
+	self->command_current = strv_make ();
 	self->command_pid = -1;
 	self->command_fd = -1;
-	poller_fd_init (&self->command_event, &self->poller, -1);
-	str_init (&self->command_buffer);
+	self->command_event = poller_fd_make (&self->poller, -1);
+	self->command_buffer = str_make ();
 
 	set_cloexec (ConnectionNumber (self->dpy));
-	poller_fd_init (&self->x_event, &self->poller,
-		ConnectionNumber (self->dpy));
+	self->x_event =
+		poller_fd_make (&self->poller, ConnectionNumber (self->dpy));
 
 	app_context_init_xsync (self);
 
@@ -1286,13 +1279,12 @@ app_context_init (struct app_context *self)
 		dbus_error_free (&err);
 	}
 
-	mpd_client_init (&self->mpd_client, &self->poller);
+	self->mpd_client = mpd_client_make (&self->poller);
 
 	nut_client_init (&self->nut_client, &self->poller);
-	str_map_init (&self->nut_ups_info);
-	self->nut_ups_info.free = str_map_destroy;
+	self->nut_ups_info = str_map_make (str_map_destroy);
 
-	strv_init (&self->sink_ports);
+	self->sink_ports = strv_make ();
 }
 
 static void
@@ -1355,8 +1347,7 @@ read_value (int dir, const char *filename, struct error **e)
 		return NULL;
 	}
 
-	struct str s;
-	str_init (&s);
+	struct str s = str_make ();
 	bool success = read_line (fp, &s);
 	fclose (fp);
 
@@ -1400,8 +1391,7 @@ read_battery_status (int dir, struct error **e)
 		error_propagate (e, error);
 	else
 	{
-		struct str s;
-		str_init (&s);
+		struct str s = str_make ();
 		str_append (&s, status);
 
 		// Dell is being unreasonable and seems to set charge_now
@@ -1509,8 +1499,7 @@ make_volume_status (struct app_context *ctx)
 	if (!ctx->sink_volume.channels)
 		return xstrdup ("");
 
-	struct str s;
-	str_init (&s);
+	struct str s = str_make ();
 	if (ctx->sink_muted)
 		str_append (&s, "Muted ");
 
@@ -1750,7 +1739,7 @@ on_command_start (void *user_data)
 	ctx->command_pid = pid;
 	str_reset (&ctx->command_buffer);
 
-	poller_fd_init (&ctx->command_event, &ctx->poller,
+	ctx->command_event = poller_fd_make (&ctx->poller,
 		(ctx->command_fd = output_pipe[PIPE_READ]));
 	ctx->command_event.dispatcher = on_command_ready;
 	ctx->command_event.user_data = ctx;
@@ -1763,9 +1752,8 @@ on_command_start (void *user_data)
 static void
 mpd_vector_to_map (const struct strv *data, struct str_map *map)
 {
-	str_map_init (map);
+	*map = str_map_make (free);
 	map->key_xfrm = tolower_ascii_strxfrm;
-	map->free = free;
 
 	char *key, *value;
 	for (size_t i = 0; i < data->len; i++)
@@ -1795,8 +1783,7 @@ mpd_on_info_response (const struct mpd_response *response,
 	free (ctx->mpd_status);
 	ctx->mpd_status = NULL;
 
-	struct str s;
-	str_init (&s);
+	struct str s = str_make ();
 
 	const char *value;
 	if ((value = str_map_find (&map, "state")))
@@ -1996,13 +1983,10 @@ nut_process_ups (struct app_context *ctx, struct strv *ups_list,
 	if (!soft_assert (xstrtoul (&runtime_sec, runtime, 10)))
 		return;
 
-	struct strv items;
-	strv_init (&items);
-
+	struct strv items = strv_make ();
 	bool running_on_batteries = false;
 
-	struct strv v;
-	strv_init (&v);
+	struct strv v = strv_make ();
 	cstr_split (status, " ", true, &v);
 	for (size_t i = 0; i < v.len; i++)
 	{
@@ -2027,8 +2011,7 @@ nut_process_ups (struct app_context *ctx, struct strv *ups_list,
 	 && xstrtoul (&threshold_n, threshold, 10)
 	 && load_n >= threshold_n)
 	{
-		struct str item;
-		str_init (&item);
+		struct str item = str_make ();
 		str_append_printf (&item, "load %s%%", load);
 
 		const char *power = str_map_find (dict, "ups.realpower.nominal");
@@ -2043,10 +2026,8 @@ nut_process_ups (struct app_context *ctx, struct strv *ups_list,
 		strv_append_owned (&items, str_steal (&item));
 	}
 
-	struct str result;
-	str_init (&result);
+	struct str result = str_make ();
 	str_append (&result, "UPS: ");
-
 	for (size_t i = 0; i < items.len; i++)
 	{
 		if (i) str_append (&result, "; ");
@@ -2063,11 +2044,9 @@ nut_on_logout_response (const struct nut_response *response, void *user_data)
 		return;
 
 	struct app_context *ctx = user_data;
-	struct strv ups_list;
-	strv_init (&ups_list);
+	struct strv ups_list = strv_make ();
 
-	struct str_map_iter iter;
-	str_map_iter_init (&iter, &ctx->nut_ups_info);
+	struct str_map_iter iter = str_map_iter_make (&ctx->nut_ups_info);
 	struct str_map *dict;
 	while ((dict = str_map_iter_next (&iter)))
 		nut_process_ups (ctx, &ups_list, iter.link->key, dict);
@@ -2077,8 +2056,7 @@ nut_on_logout_response (const struct nut_response *response, void *user_data)
 
 	if (ups_list.len)
 	{
-		struct str status;
-		str_init (&status);
+		struct str status = str_make ();
 		str_append (&status, ups_list.vector[0]);
 		for (size_t i = 1; i < ups_list.len; i++)
 			str_append_printf (&status, "   %s", ups_list.vector[0]);
@@ -2097,8 +2075,8 @@ nut_store_var (struct app_context *ctx,
 	struct str_map *map;
 	if (!(map = str_map_find (&ctx->nut_ups_info, ups_name)))
 	{
-		str_map_init ((map = xcalloc (1, sizeof *map)));
-		map->free = free;
+		map = xmalloc (sizeof *map);
+		*map = str_map_make (free);
 		str_map_set (&ctx->nut_ups_info, ups_name, map);
 	}
 
@@ -2777,7 +2755,7 @@ setup_signal_handlers (struct app_context *ctx)
 	if (sigaction (SIGCHLD, &sa, NULL) == -1)
 		print_error ("%s: %s", "sigaction", strerror (errno));
 
-	poller_fd_init (&g_signal_event, &ctx->poller, g_signal_pipe[PIPE_READ]);
+	g_signal_event = poller_fd_make (&ctx->poller, g_signal_pipe[PIPE_READ]);
 	g_signal_event.dispatcher = (poller_fd_fn) on_signal_pipe_readable;
 	g_signal_event.user_data = ctx;
 	poller_fd_set (&g_signal_event, POLLIN);
@@ -2787,7 +2765,7 @@ static void
 poller_timer_init_and_set (struct poller_timer *self, struct poller *poller,
 	poller_timer_fn cb, void *user_data)
 {
-	poller_timer_init (self, poller);
+	*self = poller_timer_make (poller);
 	self->dispatcher = cb;
 	self->user_data = user_data;
 
@@ -2811,8 +2789,8 @@ main (int argc, char *argv[])
 		{ 0, NULL, NULL, 0, NULL }
 	};
 
-	struct opt_handler oh;
-	opt_handler_init (&oh, argc, argv, opts, NULL, "Set root window name.");
+	struct opt_handler oh =
+		opt_handler_make (argc, argv, opts, NULL, "Set root window name.");
 	bool i3bar = false;
 
 	int c;

@@ -125,8 +125,7 @@ static bool
 ddc_send (int fd, unsigned command, void *args, size_t args_len,
 	struct error **e)
 {
-	struct str buf;
-	str_init (&buf);
+	struct str buf = str_make ();
 	str_pack_u8 (&buf, DDC_ADDRESS_HOST | I2C_READ);
 	str_pack_u8 (&buf, DDC_LENGTH_XOR | (args_len + 1));
 	str_pack_u8 (&buf, command);
@@ -174,8 +173,7 @@ ddc_read (int fd, unsigned *command, void *out_buf, size_t *n_read,
 	if (ioctl (fd, I2C_RDWR, &data) < 0)
 		return error_set (e, "%s: %s", "ioctl", strerror (errno));
 
-	struct msg_unpacker unpacker;
-	msg_unpacker_init (&unpacker, buf, sizeof buf);
+	struct msg_unpacker unpacker = msg_unpacker_make (buf, sizeof buf);
 
 	uint8_t sender, length, cmd;
 	(void) msg_unpacker_u8 (&unpacker, &sender);
@@ -222,8 +220,7 @@ vcp_get_feature (int fd, uint8_t feature, struct vcp_feature_readout *out,
 	if (command != DDC_GET_VCP_FEATURE_REPLY || len != 7)
 		return error_set (e, "invalid response");
 
-	struct msg_unpacker unpacker;
-	msg_unpacker_init (&unpacker, buf, len);
+	struct msg_unpacker unpacker = msg_unpacker_make (buf, len);
 
 	uint8_t result;     msg_unpacker_u8  (&unpacker, &result);
 	uint8_t vcp_opcode; msg_unpacker_u8  (&unpacker, &vcp_opcode);
