@@ -2,6 +2,7 @@
  * priod.c: process reprioritizing daemon
  *
  * Thanks to http://netsplit.com/the-proc-connector-and-socket-filters
+ * for showing the way around the proc connector and BPF.
  *
  * Copyright (c) 2017, Přemysl Janouch <p.janouch@gmail.com>
  *
@@ -27,6 +28,8 @@
 #define PROGRAM_NAME "priod"
 #include "liberty/liberty.c"
 
+#include <dirent.h>
+
 #include <linux/cn_proc.h>
 #include <linux/netlink.h>
 #include <linux/connector.h>
@@ -37,6 +40,17 @@
 
 // --- Main program ------------------------------------------------------------
 
+#define RULE_UNSET INT_MIN
+
+struct rule
+{
+	char *program_name;                 ///< Program name to match against
+
+	int oom_score_adj;                  ///< For /proc/%/oom_score_adj
+	int prio;                           ///< For setpriority()
+	int ioprio;                         ///< For SYS_ioprio_set
+};
+
 struct app_context
 {
 	struct poller poller;               ///< Poller
@@ -44,6 +58,9 @@ struct app_context
 
 	int proc_fd;                        ///< Proc connector FD
 	struct poller_fd proc_event;        ///< Proc connector read event
+
+	struct rule *rules;                 ///< Rules
+	size_t rules_len;                   ///< Number of rules
 };
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -59,6 +76,77 @@ log_message_custom (void *user_data, const char *quote, const char *fmt,
 	fputs (quote, stream);
 	vfprintf (stream, fmt, ap);
 	fputs ("\n", stream);
+}
+
+// --- Configuration -----------------------------------------------------------
+
+static bool
+load_integer (struct str_map *root, const char *key, int min, int max,
+	int *value, struct error **e)
+{
+	*value = RULE_UNSET;
+
+	struct config_item *item;
+	if (!(item = str_map_find (root, key)))
+		return true;
+
+	if (item->type != CONFIG_ITEM_INTEGER
+	 || item->value.integer < min || item->value.integer > max)
+		return error_set (e, "%s: must be an integer (%d..%d)", key, min, max);
+
+	*value = item->value.integer;
+	return true;
+}
+
+static bool
+load_rule (const char *name, struct str_map *m, struct rule *r,
+	struct error **e)
+{
+	r->program_name = xstrdup (name);
+	if (!load_integer (m, "oom_score_adj", -1000, 1000, &r->oom_score_adj, e)
+	 || !load_integer (m, "prio",            -20,   19, &r->prio,          e)
+	 || !load_integer (m, "ioprio",            0,    7, &r->ioprio,        e))
+		return false;
+	return true;
+}
+
+static struct rule *
+find_rule (struct app_context *ctx, const char *program_name)
+{
+	for (size_t i = 0; i < ctx->rules_len; i++)
+		if (!strcmp (ctx->rules[i].program_name, program_name))
+			return ctx->rules + i;
+	return NULL;
+}
+
+static void
+load_configuration (struct app_context *ctx, const char *config_path)
+{
+	struct error *e = NULL;
+	struct config_item *root = config_read_from_file (config_path, &e);
+
+	if (e)
+	{
+		print_error ("error loading configuration: %s", e->message);
+		error_free (e);
+		exit (EXIT_FAILURE);
+	}
+
+	struct str_map_iter iter;
+	str_map_iter_init (&iter, &root->value.object);
+	ctx->rules = xcalloc (iter.map->len, sizeof *ctx->rules);
+	ctx->rules_len = 0;
+
+	struct config_item *subtree;
+	while ((subtree = str_map_iter_next (&iter)))
+	{
+		const char *path = iter.link->key;
+		if (subtree->type != CONFIG_ITEM_OBJECT)
+			exit_fatal ("rule `%s' in configuration is not an object", path);
+		if (!load_rule (path, &subtree->value.object,
+			&ctx->rules[ctx->rules_len++], &e))
+			exit_fatal ("rule `%s': %s", path, e->message);
+	}
 }
 
 // --- Signals -----------------------------------------------------------------
@@ -125,35 +213,95 @@ enum
 #define IOPRIO_CLASS_SHIFT 13
 
 static void
-on_exec_name (struct app_context *ctx, int pid, const char *name)
+adj_oom_score (int pid, const char *program_name, int score)
 {
-	print_status ("exec %d %s", pid, name);
-
-	if (true)
-		return;
-
-	setpriority (PRIO_PROCESS, pid, 0 /* TODO -20..20 */);
-
-	// TODO: this is per thread, and there's an inherent race condition;
-	//   keep going through /proc/%d/task and reprioritize all threads;
-	//   stop trying after N-th try
-	syscall (SYS_ioprio_set, IOPRIO_WHO_PROCESS,
-		IOPRIO_CLASS_BE << IOPRIO_CLASS_SHIFT | 0 /* TODO 0..7 */);
-
+	char buf[16]; snprintf (buf, sizeof buf, "%d\n", score);
 	char *path = xstrdup_printf ("/proc/%d/oom_score_adj", pid);
 	struct error *e = NULL;
-	// TODO: figure out the contents
-	if (!write_file (path, "", 0, &e))
+	if (!write_file (path, buf, strlen (buf), &e))
 	{
-		print_error ("%s", e->message);
+		print_error ("%d (%s): %s", pid, program_name, e->message);
 		error_free (e);
 	}
 	free (path);
 }
 
+static bool
+reprioritize (int pid, const char *program_name, DIR *dir, struct rule *rule,
+	struct str_map *set)
+{
+	size_t not_previously_visited = 0;
+	struct dirent *iter;
+	while ((errno = 0, iter = readdir (dir)))
+	{
+		int tid = atoi (iter->d_name);
+		if (!tid || str_map_find (set, iter->d_name))
+			continue;
+
+		print_debug (" - thread %d", tid);
+		str_map_set (set, iter->d_name, (void *) ++not_previously_visited);
+
+		if (RULE_UNSET != rule->prio
+		 && setpriority (PRIO_PROCESS, pid, rule->prio))
+			print_error ("%d (%s): thread %d: setpriority: %s",
+				pid, program_name, tid, strerror (errno));
+		if (RULE_UNSET != rule->ioprio
+		 && syscall (SYS_ioprio_set, IOPRIO_WHO_PROCESS, tid,
+				IOPRIO_CLASS_BE << IOPRIO_CLASS_SHIFT | rule->ioprio))
+			print_error ("%d (%s): thread %d: ioprio_set: %s",
+				pid, program_name, tid, strerror (errno));
+	}
+	if (errno)
+	{
+		print_error ("%d (%s): readdir: %s",
+			pid, program_name, strerror (errno));
+	}
+	return not_previously_visited == 0;
+}
+
+static void
+on_exec_name (struct app_context *ctx, int pid, const char *program_name)
+{
+	// TODO: we might want to at least provide more criteria to match on,
+	//   so as to not blindly trust everything, despite these priorities being
+	//   relatively harmless if you overlook possible "denial of service"
+	struct rule *rule = find_rule (ctx, program_name);
+	const char *slash = strrchr (program_name, '/');
+	if (!rule && (!slash || !(rule = find_rule (ctx, slash + 1))))
+		return;
+
+	print_debug ("%d (%s) matched", pid, program_name);
+	if (RULE_UNSET != rule->oom_score_adj)
+		adj_oom_score (pid, program_name, rule->oom_score_adj);
+
+	// Priority APIs are strictly per-thread (i.e. Linux "task"), so we must
+	// iterate through all tasks within a thread group
+	char *path = xstrdup_printf ("/proc/%d/task", pid);
+	DIR *dir = opendir (path);
+	free (path);
+	if (!dir)
+	{
+		print_error ("%d (%s): opendir: %s",
+			pid, program_name, strerror (errno));
+		return;
+	}
+
+	struct str_map set;
+	str_map_init (&set);
+
+	// This has an inherent race condition, but let's give it a try
+	for (size_t retries = 3; retries--; )
+		if (reprioritize (pid, program_name, dir, rule, &set))
+			break;
+
+	str_map_free (&set);
+	closedir (dir);
+}
+
 static void
 on_exec (struct app_context *ctx, int pid)
 {
+	// This is inherently racy but there seems to be no better way to do it
 	char *path = xstrdup_printf ("/proc/%d/cmdline", pid);
 	struct str cmdline;
 	str_init (&cmdline);
@@ -240,7 +388,8 @@ parse_program_arguments (int argc, char **argv)
 	};
 
 	struct opt_handler oh;
-	opt_handler_init (&oh, argc, argv, opts, "CONFIG", "Fan controller.");
+	opt_handler_init (&oh, argc, argv, opts, "CONFIG",
+		"Process reprioritizing daemon.");
 
 	int c;
 	while ((c = opt_handler_get (&oh)) != -1)
@@ -334,7 +483,7 @@ main (int argc, char *argv[])
 	signal_event.user_data = &ctx;
 	poller_fd_set (&signal_event, POLLIN);
 
-	// TODO: load configuration so that we know what to do with the events
+	load_configuration (&ctx, config_path);
 
 	ctx.proc_fd = socket (PF_NETLINK,
 		SOCK_DGRAM | SOCK_NONBLOCK | SOCK_CLOEXEC, NETLINK_CONNECTOR);
@@ -379,5 +528,8 @@ main (int argc, char *argv[])
 
 	poller_free (&ctx.poller);
 	xclose (ctx.proc_fd);
+	for (size_t i = 0; i < ctx.rules_len; i++)
+		free (ctx.rules[i].program_name);
+	free (ctx.rules);
 	return EXIT_SUCCESS;
 }
