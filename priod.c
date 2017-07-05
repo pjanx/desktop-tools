@@ -30,6 +30,7 @@
 #include <linux/cn_proc.h>
 #include <linux/netlink.h>
 #include <linux/connector.h>
+#include <linux/filter.h>
 
 #include <sys/resource.h>
 #include <sys/syscall.h>
@@ -173,8 +174,10 @@ on_exec (struct app_context *ctx, int pid)
 static void
 on_netlink_message (struct app_context *ctx, struct nlmsghdr *mh)
 {
-	if (mh->nlmsg_type == NLMSG_ERROR
-	 || mh->nlmsg_type == NLMSG_NOOP)
+	// In practice the kernel connector never sends multipart messages
+	if (!soft_assert (mh->nlmsg_type != 0)
+	 || !soft_assert (mh->nlmsg_flags == 0)
+	 || mh->nlmsg_type != NLMSG_DONE)
 		return;
 
 	struct cn_msg *m = NLMSG_DATA (mh);
@@ -182,6 +185,7 @@ on_netlink_message (struct app_context *ctx, struct nlmsghdr *mh)
 	 || m->id.val != CN_VAL_PROC)
 		return;
 
+	// XXX: potential alignment issues
 	struct proc_event *e = (struct proc_event *) m->data;
 	if (e->what == PROC_EVENT_EXEC)
 		on_exec (ctx, e->event_data.exit.process_tgid);
@@ -190,7 +194,7 @@ on_netlink_message (struct app_context *ctx, struct nlmsghdr *mh)
 static void
 on_event (const struct pollfd *pfd, struct app_context *ctx)
 {
-	char buf[4096];
+	char buf[sysconf (_SC_PAGESIZE)];
 	struct sockaddr_nl addr;
 	while (true)
 	{
@@ -208,6 +212,7 @@ on_event (const struct pollfd *pfd, struct app_context *ctx)
 		if (addr.nl_pid)
 			continue;
 
+		// In practice the kernel connector always sends one per dgram
 		for (struct nlmsghdr *mh = (struct nlmsghdr *) buf;
 			NLMSG_OK (mh, len); mh = NLMSG_NEXT (mh, len))
 			on_netlink_message (ctx, mh);
@@ -269,6 +274,48 @@ parse_program_arguments (int argc, char **argv)
 	return argv[0];
 }
 
+/// Sets up a filter so that we're only woken up by the kernel on exec() events
+static void
+setup_exec_filter (int fd)
+{
+	struct incoming
+	{
+		union { struct nlmsghdr netlink; char align[NLMSG_HDRLEN]; };
+		struct cn_msg connector;
+		struct proc_event event;
+	}
+	__attribute__ ((packed));
+
+	// Byteswapping is needed because the netlink protocol is host-endian
+	struct sock_filter filter[] =
+	{
+		// Only continue filtering dgrams with one "proc_event" message in them
+		BPF_STMT (BPF_LD | BPF_W | BPF_LEN, 0),
+		BPF_JUMP (BPF_JMP | BPF_JEQ | BPF_K, sizeof (struct incoming), 0, 9),
+		BPF_STMT (BPF_LD | BPF_H | BPF_ABS,
+			offsetof (struct incoming, netlink.nlmsg_type)),
+		BPF_JUMP (BPF_JMP | BPF_JEQ | BPF_K, htons (NLMSG_DONE), 0, 7),
+		BPF_STMT (BPF_LD | BPF_W | BPF_ABS,
+			offsetof (struct incoming, connector.id.idx)),
+		BPF_JUMP (BPF_JMP | BPF_JEQ | BPF_K, htonl (CN_IDX_PROC), 0, 5),
+		BPF_STMT (BPF_LD | BPF_W | BPF_ABS,
+			offsetof (struct incoming, connector.id.val)),
+		BPF_JUMP (BPF_JMP | BPF_JEQ | BPF_K, htonl (CN_VAL_PROC), 0, 3),
+
+		BPF_STMT (BPF_LD | BPF_W | BPF_ABS,
+			offsetof (struct incoming, event.what)),
+		BPF_JUMP (BPF_JMP | BPF_JEQ | BPF_K, htonl (PROC_EVENT_EXEC), 1, 0),
+		BPF_STMT (BPF_RET | BPF_K, 0),
+		BPF_STMT (BPF_RET | BPF_K, 0xffffffff),
+	};
+
+	struct sock_fprog fprog = { .filter = filter, .len = N_ELEMENTS (filter) };
+	const int yes = 1;
+	if (setsockopt (fd, SOL_SOCKET, SO_ATTACH_FILTER, &fprog, sizeof fprog) < 0
+	 || setsockopt (fd, SOL_NETLINK, NETLINK_NO_ENOBUFS, &yes, sizeof yes) < 0)
+		print_error ("setsockopt: %s", strerror (errno));
+}
+
 int
 main (int argc, char *argv[])
 {
@@ -294,6 +341,8 @@ main (int argc, char *argv[])
 	if (ctx.proc_fd < 0)
 		exit_fatal ("cannot make a proc connector: %s", strerror (errno));
 
+	setup_exec_filter (ctx.proc_fd);
+
 	struct sockaddr_nl addr = { .nl_family = AF_NETLINK, .nl_pid = getpid (),
 		.nl_groups = CN_IDX_PROC };
 	if (bind (ctx.proc_fd, (struct sockaddr *) &addr, sizeof addr) < 0)
@@ -301,12 +350,11 @@ main (int argc, char *argv[])
 
 	struct
 	{
-		// Beware of padding between fields, shouldn't be any on x86-64
 		union { struct nlmsghdr netlink; char align[NLMSG_HDRLEN]; };
 		struct cn_msg connector;
 		enum proc_cn_mcast_op op;
 	}
-	subscription =
+	__attribute__ ((packed)) subscription =
 	{
 		.netlink.nlmsg_len = sizeof subscription,
 		.netlink.nlmsg_type = NLMSG_DONE,
