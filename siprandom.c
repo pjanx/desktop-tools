@@ -34,7 +34,7 @@ parse_program_arguments (int argc, char **argv)
 	};
 
 	struct opt_handler oh =
-		opt_handler_make (argc, argv, opts, "CONFIG", "PRNG.");
+		opt_handler_make (argc, argv, opts, NULL, "PRNG.");
 
 	int c;
 	while ((c = opt_handler_get (&oh)) != -1)

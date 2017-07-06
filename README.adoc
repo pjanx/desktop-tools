@@ -13,10 +13,12 @@ to other people as well:
  - 'fancontrol-ng' is a clone of fancontrol that can handle errors on resume
    from suspend instead of setting fans to maximum speed and quitting;
    in general it doesn't handle everything the original does
- - 'priod' sets CPU, I/O and OOM killer priorities for new processes according
-   to configuration
+ - 'priod' sets process CPU, I/O and OOM killer priorities automatically
+   according to configuration
  - 'shellify' is a simple script that sets up a shell for commands like vgdb
    and nmcli that are painfully lacking it
+ - 'iexec' runs a program and attempts to restart it cleanly when the
+   executable file is replaced on the disk
  - 'gdm-switch-user' tells the running GDM daemon, if any, to show the switch
    user screen
  - 'siprandom' uses the SipHash 2-4 algorithm to produce a stream of

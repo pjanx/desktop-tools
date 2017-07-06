@@ -51,6 +51,9 @@ target_link_libraries (fancontrol-ng ${project_libraries})
 add_executable (priod priod.c)
 target_link_libraries (priod ${project_libraries})
 
+add_executable (iexec iexec.c)
+target_link_libraries (iexec ${project_libraries})
+
 if (WITH_GDM)
 	include_directories (${gdm_INCLUDE_DIRS})
 	add_executable (gdm-switch-user gdm-switch-user.c)
@@ -90,8 +93,8 @@ if (WITH_GDM)
 	install (TARGETS gdm-switch-user DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif (WITH_GDM)
 
-install (TARGETS wmstatus brightness input-switch fancontrol-ng priod siprandom
-	DESTINATION ${CMAKE_INSTALL_BINDIR})
+install (TARGETS wmstatus brightness input-switch fancontrol-ng priod iexec
+	siprandom DESTINATION ${CMAKE_INSTALL_BINDIR})
 install (PROGRAMS shellify DESTINATION ${CMAKE_INSTALL_BINDIR})
 install (FILES LICENSE DESTINATION ${CMAKE_INSTALL_DOCDIR})
 
