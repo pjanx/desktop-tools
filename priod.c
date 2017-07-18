@@ -368,7 +368,7 @@ on_event (const struct pollfd *pfd, struct app_context *ctx)
 			(struct sockaddr *) &addr, &addr_len);
 		if (len == 0)
 			exit_fatal ("socket closed");
-		if (len < 0 && errno == EAGAIN)
+		if (len < 0 && (errno == EAGAIN || errno == ENOBUFS))
 			return;
 		if (len < 0)
 			exit_fatal ("recvfrom: %s", strerror (errno));
@@ -476,9 +476,12 @@ setup_exec_filter (int fd)
 
 	struct sock_fprog fprog = { .filter = filter, .len = N_ELEMENTS (filter) };
 	const int yes = 1;
-	if (setsockopt (fd, SOL_SOCKET, SO_ATTACH_FILTER, &fprog, sizeof fprog) < 0
-	 || setsockopt (fd, SOL_NETLINK, NETLINK_NO_ENOBUFS, &yes, sizeof yes) < 0)
+	if (setsockopt (fd, SOL_SOCKET, SO_ATTACH_FILTER, &fprog, sizeof fprog) < 0)
 		print_error ("setsockopt: %s", strerror (errno));
+#if defined SOL_NETLINK && defined NETLINK_NO_ENOBUFS
+	if (setsockopt (fd, SOL_NETLINK, NETLINK_NO_ENOBUFS, &yes, sizeof yes) < 0)
+		print_error ("setsockopt: %s", strerror (errno));
+#endif
 }
 
 int
