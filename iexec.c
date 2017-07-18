@@ -52,10 +52,15 @@ spawn (char *argv[])
 {
 	if ((g_child = fork ()) == -1)
 		exit_fatal ("fork: %s", strerror (errno));
-	else if (!g_child)
+	else if (g_child)
+		return;
+
+	// A linker can create spurious CLOSE_WRITEs, wait until it's executable
+	while (1)
 	{
 		execvp (argv[0], argv);
-		exit_fatal ("execvp: %s", strerror (errno));
+		print_error ("execvp: %s", strerror (errno));
+		sleep (1);
 	}
 }
 
