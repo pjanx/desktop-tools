@@ -2551,6 +2551,9 @@ g_keys[] =
 	/* xmodmap | grep -e Alt_R -e Meta_R -e ISO_Level3_Shift -e Mode_switch */
 	{ Mod4Mask | Mod5Mask,  XK_Left,      on_mpd_backward,      0 },
 	{ Mod4Mask | Mod5Mask,  XK_Right,     on_mpd_forward,       0 },
+	{ 0, XF86XK_AudioPlay,                on_mpd_play,          0 },
+	{ 0, XF86XK_AudioPrev,                on_mpd_prev,          0 },
+	{ 0, XF86XK_AudioNext,                on_mpd_next,          0 },
 
 	// Display input sources
 	{ Mod4Mask,             XK_F5,        on_input_switch,      0 },
