@@ -52,7 +52,7 @@ add_executable (priod priod.c)
 target_link_libraries (priod ${project_libraries})
 
 add_executable (iexec iexec.c)
-target_link_libraries (iexec ${project_libraries})
+target_link_libraries (iexec)
 
 if (WITH_GDM)
 	include_directories (${gdm_INCLUDE_DIRS})
