@@ -39,6 +39,9 @@ add_executable (wmstatus wmstatus.c)
 target_link_libraries (wmstatus ${project_libraries})
 add_threads (wmstatus)
 
+add_executable (paswitch paswitch.c)
+target_link_libraries (paswitch ${project_libraries})
+
 add_executable (brightness brightness.c)
 target_link_libraries (brightness ${project_libraries})
 
