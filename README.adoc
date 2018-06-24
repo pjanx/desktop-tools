@@ -31,18 +31,14 @@ Don't expect them to work under any OS that isn't Linux.
 Packages
 --------
 Regular releases are sporadic.  git master should be stable enough.  You can get
-a package with the latest development version from Archlinux's AUR, or from
-openSUSE Build Service for the rest of mainstream distributions.  Consult the
-list of repositories and their respective links at:
-
-https://build.opensuse.org/project/repositories/home:pjanouch:git
+a package with the latest development version from Archlinux's AUR.
 
 Building
 --------
 Build dependencies: CMake, pkg-config, liberty (included) +
 Runtime dependencies: libpulse, libx11, dbus-1, libgdm (optional)
 
- $ git clone --recursive https://github.com/pjanouch/desktop-tools.git
+ $ git clone --recursive https://git.janouch.name/p/desktop-tools.git
  $ mkdir desktop-tools/build
  $ cd desktop-tools/build
  $ cmake .. -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE=Debug
@@ -59,11 +55,11 @@ Or you can try telling CMake to make a package for you.  For Debian it is:
 
 Contributing and Support
 ------------------------
-Use this project's GitHub to report any bugs, request features, or submit pull
-requests.  If you want to discuss this project, or maybe just hang out with
-the developer, feel free to join me at irc://irc.janouch.name, channel #dev.
+Use https://git.janouch.name/p/desktop-tools to report bugs, request features,
+or submit pull requests.  `git send-email` is tolerated.  If you want to discuss
+the project, feel free to join me at ircs://irc.janouch.name, channel #dev.
 
-Bitcoin donations: 12r5uEWEgcHC46xd64tt3hHt9EUvYYDHe9
+Bitcoin donations are accepted at: 12r5uEWEgcHC46xd64tt3hHt9EUvYYDHe9
 
 License
 -------
