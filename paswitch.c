@@ -154,6 +154,9 @@ struct app_context
 	pa_context *context;                ///< PulseAudio connection context
 
 	bool failed;                        ///< General PulseAudio failure
+	bool reset_sinks;                   ///< Flag for info callback
+	bool reset_inputs;                  ///< Flag for info callback
+
 	char *default_sink;                 ///< Name of the default sink
 	struct sink *sinks;                 ///< PulseAudio sinks
 	struct sink *sinks_tail;            ///< Tail of PulseAudio sinks
@@ -234,7 +237,13 @@ make_inputs_status (struct app_context *ctx, struct sink *sink)
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
-#define DEFAULT_SINK "@DEFAULT_SINK@"
+static void
+forget_sinks (struct app_context *ctx)
+{
+	LIST_FOR_EACH (struct sink, iter, ctx->sinks)
+		sink_destroy (iter);
+	ctx->sinks = ctx->sinks_tail = NULL;
+}
 
 static void
 on_sink_info (pa_context *context, const pa_sink_info *info, int eol,
@@ -242,6 +251,13 @@ on_sink_info (pa_context *context, const pa_sink_info *info, int eol,
 {
 	(void) context;
 	struct app_context *ctx = userdata;
+
+	// Assuming replies cannot overlap
+	if (ctx->reset_sinks)
+	{
+		forget_sinks (ctx);
+		ctx->reset_sinks = false;
+	}
 	if (!info || eol)
 	{
 		// TODO: handle the case of when sinks disappear
@@ -249,6 +265,7 @@ on_sink_info (pa_context *context, const pa_sink_info *info, int eol,
 			ctx->selected_sink = ctx->sinks->index;
 
 		poller_idle_set (&ctx->redraw_event);
+		ctx->reset_sinks = true;
 		return;
 	}
 
@@ -281,41 +298,10 @@ on_sink_info (pa_context *context, const pa_sink_info *info, int eol,
 }
 
 static void
-forget_sinks (struct app_context *ctx)
-{
-	LIST_FOR_EACH (struct sink, iter, ctx->sinks)
-		sink_destroy (iter);
-	ctx->sinks = ctx->sinks_tail = NULL;
-}
-
-static void
 update_sinks (struct app_context *ctx)
 {
-	// It shouldn't matter much if we interrupt this operation in the middle
-	// since we request new information right away.  At least so long as
-	// replies can't overlap.  Though even then we're safe, at least.
-	forget_sinks (ctx);
-
 	pa_operation_unref (pa_context_get_sink_info_list
 		(ctx->context, on_sink_info, ctx));
-}
-
-static void
-on_sink_input_info (pa_context *context, const struct pa_sink_input_info *info,
-	int eol, void *userdata)
-{
-	(void) context;
-	struct app_context *ctx = userdata;
-	if (!info || eol)
-	{
-		poller_idle_set (&ctx->redraw_event);
-		return;
-	}
-
-	struct sink_input *input = sink_input_new ();
-	input->sink = info->sink;
-	input->index = info->index;
-	LIST_APPEND_WITH_TAIL (ctx->inputs, ctx->inputs_tail, input);
 }
 
 static void
@@ -327,13 +313,34 @@ forget_sink_inputs (struct app_context *ctx)
 }
 
 static void
+on_sink_input_info (pa_context *context, const struct pa_sink_input_info *info,
+	int eol, void *userdata)
+{
+	(void) context;
+	struct app_context *ctx = userdata;
+
+	// Assuming replies cannot overlap
+	if (ctx->reset_inputs)
+	{
+		forget_sink_inputs (ctx);
+		ctx->reset_inputs = false;
+	}
+	if (!info || eol)
+	{
+		poller_idle_set (&ctx->redraw_event);
+		ctx->reset_inputs = true;
+		return;
+	}
+
+	struct sink_input *input = sink_input_new ();
+	input->sink = info->sink;
+	input->index = info->index;
+	LIST_APPEND_WITH_TAIL (ctx->inputs, ctx->inputs_tail, input);
+}
+
+static void
 update_sink_inputs (struct app_context *ctx)
 {
-	// It shouldn't matter much if we interrupt this operation in the middle
-	// since we request new information right away.  At least so long as
-	// replies can't overlap.  Though even then we're safe, at least.
-	forget_sink_inputs (ctx);
-
 	pa_operation_unref (pa_context_get_sink_input_info_list
 		(ctx->context, on_sink_input_info, ctx));
 }
@@ -349,6 +356,13 @@ on_server_info (pa_context *context, const struct pa_server_info *info,
 		ctx->default_sink = xstrdup (info->default_sink_name);
 	else
 		cstr_set (&ctx->default_sink, NULL);
+}
+
+static void
+update_server_info (struct app_context *ctx)
+{
+	pa_operation_unref (pa_context_get_server_info (ctx->context,
+		on_server_info, ctx));
 }
 
 static void
@@ -368,8 +382,7 @@ on_event (pa_context *context, pa_subscription_event_type_t event,
 		update_sink_inputs (ctx);
 		break;
 	case PA_SUBSCRIPTION_EVENT_SERVER:
-		pa_operation_unref (pa_context_get_server_info (context,
-			on_server_info, userdata));
+		update_server_info (ctx);
 	}
 }
 
@@ -401,11 +414,13 @@ on_context_state_change (pa_context *context, void *userdata)
 		ctx->context = NULL;
 
 		forget_sinks (ctx);
+		forget_sink_inputs (ctx);
 		cstr_set (&ctx->default_sink, NULL);
 
 		// Retry after an arbitrary delay of 5 seconds
 		poller_timer_set (&ctx->make_context, 5000);
 		return;
+
 	case PA_CONTEXT_READY:
 		ctx->failed = false;
 		poller_idle_set (&ctx->redraw_event);
@@ -415,11 +430,12 @@ on_context_state_change (pa_context *context, void *userdata)
 			PA_SUBSCRIPTION_MASK_SINK | PA_SUBSCRIPTION_MASK_SINK_INPUT |
 			PA_SUBSCRIPTION_MASK_SERVER, on_subscribe_finish, userdata));
 
+		ctx->reset_sinks = true;
+		ctx->reset_inputs = true;
+
 		update_sinks (ctx);
 		update_sink_inputs (ctx);
-
-		pa_operation_unref (pa_context_get_server_info (context,
-			on_server_info, userdata));
+		update_server_info (ctx);
 	default:
 		return;
 	}
@@ -520,7 +536,8 @@ on_redraw (struct app_context *ctx)
 	printf ("\x1b[H");   // Cursor to home
 	printf ("\x1b[2J");  // Clear the whole screen
 
-	// TODO: see if we can reduce flickering.  Buffering doesn't help much.
+	// TODO: see if we can reduce flickering in rxvt-unicode.
+	//   Buffering doesn't help, we have to do something more sophisticated.
 	// TODO: try not to write more lines than g_terminal_lines for starters
 	if (ctx->failed)
 	{
@@ -682,7 +699,11 @@ g_key_handlers[] =
 
 	{ "k",       ACTION_UP       },
 	{ "j",       ACTION_DOWN     },
+	{ "\x10",    ACTION_UP       },
+	{ "\x0e",    ACTION_DOWN     },
 	{ "\r",      ACTION_SELECT   },
+	{ "+",       ACTION_VOLUP    },
+	{ "-",       ACTION_VOLDOWN  },
 	{ "\x1b[5~", ACTION_VOLUP    },
 	{ "\x1b[6~", ACTION_VOLDOWN  },
 	{ "m",       ACTION_MUTE     },
