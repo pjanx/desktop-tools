@@ -196,6 +196,15 @@ app_context_free (struct app_context *self)
 	poller_free (&self->poller);
 }
 
+static struct sink *
+current_sink (struct app_context *ctx)
+{
+	LIST_FOR_EACH (struct sink, iter, ctx->sinks)
+		if (iter->index == ctx->selected_sink)
+			return iter;
+	return NULL;
+}
+
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
 #define VOLUME_PERCENT(x) (((x) * 100 + PA_VOLUME_NORM / 2) / PA_VOLUME_NORM)
@@ -260,9 +269,14 @@ on_sink_info (pa_context *context, const pa_sink_info *info, int eol,
 	}
 	if (!info || eol)
 	{
-		// TODO: handle the case of when sinks disappear
-		if (ctx->selected_sink == PA_INVALID_INDEX && ctx->sinks)
+		struct sink *sink = current_sink (ctx);
+		if (!sink && ctx->sinks)
+		{
 			ctx->selected_sink = ctx->sinks->index;
+			ctx->selected_port = -1;
+		}
+		else if (sink && ctx->selected_port >= (ssize_t) sink->ports_len)
+			ctx->selected_port = -1;
 
 		poller_idle_set (&ctx->redraw_event);
 		ctx->reset_sinks = true;
@@ -303,6 +317,8 @@ update_sinks (struct app_context *ctx)
 	pa_operation_unref (pa_context_get_sink_info_list
 		(ctx->context, on_sink_info, ctx));
 }
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
 static void
 forget_sink_inputs (struct app_context *ctx)
@@ -357,6 +373,8 @@ on_server_info (pa_context *context, const struct pa_server_info *info,
 	else
 		cstr_set (&ctx->default_sink, NULL);
 }
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
 static void
 update_server_info (struct app_context *ctx)
@@ -600,11 +618,7 @@ on_action (struct app_context *ctx, enum action action)
 {
 	poller_idle_set (&ctx->redraw_event);
 
-	struct sink *sink = NULL;
-	LIST_FOR_EACH (struct sink, iter, ctx->sinks)
-		if (iter->index == ctx->selected_sink)
-			sink = iter;
-
+	struct sink *sink = current_sink (ctx);
 	switch (action)
 	{
 	case ACTION_UP:
