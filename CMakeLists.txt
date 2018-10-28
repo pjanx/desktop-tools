@@ -96,8 +96,8 @@ if (WITH_GDM)
 	install (TARGETS gdm-switch-user DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif (WITH_GDM)
 
-install (TARGETS wmstatus brightness input-switch fancontrol-ng priod iexec
-	siprandom DESTINATION ${CMAKE_INSTALL_BINDIR})
+install (TARGETS wmstatus paswitch brightness input-switch fancontrol-ng priod
+	iexec siprandom DESTINATION ${CMAKE_INSTALL_BINDIR})
 install (PROGRAMS shellify DESTINATION ${CMAKE_INSTALL_BINDIR})
 install (FILES LICENSE DESTINATION ${CMAKE_INSTALL_DOCDIR})
 
