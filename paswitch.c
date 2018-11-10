@@ -1039,16 +1039,16 @@ main (int argc, char *argv[])
 	opt_handler_free (&oh);
 
 	if (!isatty (STDIN_FILENO))
-		print_fatal ("input is not a terminal");
+		exit_fatal ("input is not a terminal");
 	if (!isatty (STDOUT_FILENO))
-		print_fatal ("output is not a terminal");
+		exit_fatal ("output is not a terminal");
 
 	setlocale (LC_CTYPE, "");
 	// PulseAudio uses UTF-8, let's avoid encoding conversions
 	if (strcasecmp (nl_langinfo (CODESET), "UTF-8"))
-		print_fatal ("UTF-8 encoding required");
+		exit_fatal ("UTF-8 encoding required");
 	if (setvbuf (stdout, NULL, _IOLBF, 0) || !tty_start ())
-		print_fatal ("terminal initialization failed");
+		exit_fatal ("terminal initialization failed");
 
 	// TODO: we will need a logging function aware of our rendering
 	g_log_message_real = log_message_custom;
