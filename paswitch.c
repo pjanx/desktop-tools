@@ -791,8 +791,9 @@ read_key_sequence (const char *buf, size_t len)
 				return ++p - buf;
 			return -escapes;
 		}
+		// We don't know this sequence, so just return M-Esc
 		if (escapes == 2)
-			return -escapes;
+			return escapes;
 	}
 
 	// Shift state encodings aren't going to work, though anything else should
