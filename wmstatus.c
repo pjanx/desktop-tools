@@ -2227,9 +2227,11 @@ g_keys[] =
 	// Brightness
 	{ Mod4Mask,             XK_Home,      on_brightness,       10 },
 	{ Mod4Mask,             XK_End,       on_brightness,      -10 },
-	{ 0, XF86XK_MonBrightnessUp,         on_brightness,       10 },
-	{ 0, XF86XK_MonBrightnessDown,       on_brightness,      -10 },
+	{ 0, XF86XK_MonBrightnessUp,          on_brightness,       10 },
+	{ 0, XF86XK_MonBrightnessDown,        on_brightness,      -10 },
 
+	{ Mod4Mask,             XK_F4,        on_standby,           0 },
+	{ Mod4Mask | ShiftMask, XK_F4,        on_insomnia,          0 },
 	{ Mod4Mask,             XK_Pause,     on_standby,           0 },
 	{ Mod4Mask | ShiftMask, XK_Pause,     on_insomnia,          0 },
 
