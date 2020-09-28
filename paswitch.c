@@ -3,7 +3,7 @@
  *
  * module-switch-on-connect functionality without the on-connect part.
  *
- * Copyright (c) 2015 - 2018, Přemysl Janouch <p@janouch.name>
+ * Copyright (c) 2015 - 2018, Přemysl Eric Janouch <p@janouch.name>
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted.

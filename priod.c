@@ -4,7 +4,7 @@
  * Thanks to http://netsplit.com/the-proc-connector-and-socket-filters
  * for showing the way around the proc connector and BPF.
  *
- * Copyright (c) 2017, Přemysl Janouch <p@janouch.name>
+ * Copyright (c) 2017, Přemysl Eric Janouch <p@janouch.name>
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted.

@@ -1,7 +1,7 @@
 /*
  * siprandom.c: relatively fast pseudo-random data generator
  *
- * Copyright (c) 2016, Přemysl Janouch <p@janouch.name>
+ * Copyright (c) 2016, Přemysl Eric Janouch <p@janouch.name>
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted.

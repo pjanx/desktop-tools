@@ -1,7 +1,7 @@
 /*
  * wmstatus.c: simple PulseAudio-enabled status setter for dwm and i3
  *
- * Copyright (c) 2015 - 2017, Přemysl Janouch <p@janouch.name>
+ * Copyright (c) 2015 - 2017, Přemysl Eric Janouch <p@janouch.name>
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted.
