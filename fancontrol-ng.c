@@ -225,12 +225,12 @@ paths_new (const char *device_path, const char *path, struct config_item *pwm)
 static void
 paths_destroy (struct paths *self)
 {
-	free (self->temp);
+	cstr_set (&self->temp, NULL);
 
-	free (self->pwm);
-	free (self->pwm_enable);
-	free (self->pwm_min);
-	free (self->pwm_max);
+	cstr_set (&self->pwm, NULL);
+	cstr_set (&self->pwm_enable, NULL);
+	cstr_set (&self->pwm_min, NULL);
+	cstr_set (&self->pwm_max, NULL);
 }
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -

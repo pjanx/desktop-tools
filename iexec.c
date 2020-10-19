@@ -105,9 +105,7 @@ main (int argc, char *argv[])
 		"PROGRAM [ARG...]", "Run a program and restart on file change.");
 
 	// We have to turn that off as it causes more trouble than what it's worth
-	char *nonpermuting = xstrdup_printf ("+%s", oh.opt_string);
-	free (oh.opt_string);
-	oh.opt_string = nonpermuting;
+	cstr_set (&oh.opt_string, xstrdup_printf ("+%s", oh.opt_string));
 
 	int c;
 	while ((c = opt_handler_get (&oh)) != -1)

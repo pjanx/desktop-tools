@@ -46,13 +46,6 @@
 enum { PIPE_READ, PIPE_WRITE };
 
 static void
-cstr_set (char **s, char *new)
-{
-	free (*s);
-	*s = new;
-}
-
-static void
 log_message_custom (void *user_data, const char *quote, const char *fmt,
 	va_list ap)
 {
@@ -79,8 +72,8 @@ struct port
 static void
 port_free (struct port *self)
 {
-	free (self->name);
-	free (self->description);
+	cstr_set (&self->name, NULL);
+	cstr_set (&self->description, NULL);
 }
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -109,14 +102,14 @@ sink_new (void)
 static void
 sink_destroy (struct sink *self)
 {
-	free (self->name);
-	free (self->description);
+	cstr_set (&self->name, NULL);
+	cstr_set (&self->description, NULL);
 
 	for (size_t i = 0; i < self->ports_len; i++)
 		port_free (self->ports + i);
 	free (self->ports);
 
-	free (self->port_active);
+	cstr_set (&self->port_active, NULL);
 	free (self);
 }
 
@@ -185,7 +178,7 @@ app_context_free (struct app_context *self)
 	if (self->context)
 		pa_context_unref (self->context);
 
-	free (self->default_sink);
+	cstr_set (&self->default_sink, NULL);
 	LIST_FOR_EACH (struct sink, iter, self->sinks)
 		sink_destroy (iter);
 	LIST_FOR_EACH (struct sink_input, iter, self->inputs)

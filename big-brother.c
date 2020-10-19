@@ -149,7 +149,7 @@ static void
 app_context_free (struct app_context *self)
 {
 	str_map_free (&self->config);
-	free (self->current_title);
+	cstr_set (&self->current_title, NULL);
 	poller_fd_reset (&self->x_event);
 	XCloseDisplay (self->dpy);
 	poller_free (&self->poller);
@@ -207,8 +207,7 @@ update_window_title (struct app_context *ctx, char *new_title)
 {
 	bool changed = !ctx->current_title != !new_title
 		|| (new_title && strcmp (ctx->current_title, new_title));
-	free (ctx->current_title);
-	ctx->current_title = new_title;
+	cstr_set (&ctx->current_title, new_title);
 	return changed;
 }
 

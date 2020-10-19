@@ -951,7 +951,7 @@ app_context_free (struct app_context *self)
 	if (self->backend)	self->backend->destroy (self->backend);
 
 	poller_fd_reset (&self->x_event);
-	free (self->layout);
+	cstr_set (&self->layout, NULL);
 
 	if (self->context)  pa_context_unref (self->context);
 	if (self->dpy)      XCloseDisplay (self->dpy);
@@ -966,19 +966,20 @@ app_context_free (struct app_context *self)
 	}
 	str_free (&self->command_buffer);
 
-	free (self->insomnia_info);
+	cstr_set (&self->insomnia_info, NULL);
 	if (self->insomnia_fd != -1)
 		xclose (self->insomnia_fd);
 
 	mpd_client_free (&self->mpd_client);
-	free (self->mpd_song);
-	free (self->mpd_status);
+	cstr_set (&self->mpd_song, NULL);
+	cstr_set (&self->mpd_status, NULL);
 
 	nut_client_free (&self->nut_client);
 	str_map_free (&self->nut_ups_info);
+	cstr_set (&self->nut_status, NULL);
 
 	strv_free (&self->sink_ports);
-	free (self->sink_port_active);
+	cstr_set (&self->sink_port_active, NULL);
 
 	poller_pa_destroy (self->api);
 	poller_free (&self->poller);
@@ -1437,8 +1438,7 @@ mpd_on_info_response (const struct mpd_response *response,
 	struct str_map map;
 	mpd_vector_to_map (data, &map);
 
-	free (ctx->mpd_status);
-	ctx->mpd_status = NULL;
+	cstr_set (&ctx->mpd_status, NULL);
 
 	struct str s = str_make ();
 
@@ -1464,8 +1464,7 @@ mpd_on_info_response (const struct mpd_response *response,
 	if ((value = str_map_find (&map, "album")))
 		str_append_printf (&s, " from \001%s\001", value);
 
-	free (ctx->mpd_song);
-	ctx->mpd_song = str_steal (&s);
+	cstr_set (&ctx->mpd_song, str_steal (&s));
 
 	refresh_status (ctx);
 	str_map_free (&map);
@@ -1708,8 +1707,7 @@ nut_on_logout_response (const struct nut_response *response, void *user_data)
 	while ((dict = str_map_iter_next (&iter)))
 		nut_process_ups (ctx, &ups_list, iter.link->key, dict);
 
-	free (ctx->nut_status);
-	ctx->nut_status = NULL;
+	cstr_set (&ctx->nut_status, NULL);
 
 	if (ups_list.len)
 	{
@@ -1800,8 +1798,7 @@ nut_on_connected (void *user_data)
 static void
 nut_indicate_failure (struct app_context *ctx)
 {
-	free (ctx->nut_status);
-	ctx->nut_status = xstrdup ("NUT failure");
+	cstr_set (&ctx->nut_status, xstrdup ("NUT failure"));
 
 	refresh_status (ctx);
 }
@@ -1870,8 +1867,7 @@ on_sink_info (pa_context *context, const pa_sink_info *info, int eol,
 		ctx->sink_muted = !!info->mute;
 
 		strv_reset (&ctx->sink_ports);
-		free (ctx->sink_port_active);
-		ctx->sink_port_active = NULL;
+		cstr_set (&ctx->sink_port_active, NULL);
 
 		if (info->ports)
 			for (struct pa_sink_port_info **iter = info->ports; *iter; iter++)
@@ -2167,8 +2163,7 @@ static void
 on_insomnia (struct app_context *ctx, int arg)
 {
 	(void) arg;
-	free (ctx->insomnia_info);
-	ctx->insomnia_info = NULL;
+	cstr_set (&ctx->insomnia_info, NULL);
 
 	// Get rid of the lock if we hold one, establish it otherwise
 	if (ctx->insomnia_fd != -1)
@@ -2282,8 +2277,7 @@ on_xkb_event (struct app_context *ctx, XkbEvent *ev)
 	XkbDescPtr desc = XkbAllocKeyboard ();
 	XkbGetNames (ctx->dpy, XkbGroupNamesMask, desc);
 
-	free (ctx->layout);
-	ctx->layout = NULL;
+	cstr_set (&ctx->layout, NULL);
 
 	if (group != 0)
 	{
