@@ -24,50 +24,30 @@ include (AddThreads)
 find_package (PkgConfig REQUIRED)
 pkg_check_modules (dependencies REQUIRED libpulse x11 xext xextproto dbus-1)
 pkg_check_modules (gdm gdm glib-2.0 gio-2.0)
+include_directories (${dependencies_INCLUDE_DIRS})
 
 option (WITH_GDM "Compile with GDM support" ${gdm_FOUND})
-
-set (project_libraries ${dependencies_LIBRARIES})
-include_directories (${dependencies_INCLUDE_DIRS})
 
 # Generate a configuration file
 configure_file (${PROJECT_SOURCE_DIR}/config.h.in ${PROJECT_BINARY_DIR}/config.h)
 include_directories (${PROJECT_BINARY_DIR})
 
 # Build
-add_executable (wmstatus wmstatus.c)
-target_link_libraries (wmstatus ${project_libraries})
+foreach (name brightness fancontrol-ng iexec input-switch priod siprandom)
+	add_executable (${name} ${name}.c)
+endforeach (name)
+
+foreach (name big-brother paswitch wmstatus)
+	add_executable (${name} ${name}.c)
+	target_link_libraries (${name} ${dependencies_LIBRARIES})
+endforeach (name)
 add_threads (wmstatus)
-
-add_executable (paswitch paswitch.c)
-target_link_libraries (paswitch ${project_libraries})
-
-add_executable (brightness brightness.c)
-target_link_libraries (brightness ${project_libraries})
-
-add_executable (input-switch input-switch.c)
-target_link_libraries (input-switch ${project_libraries})
-
-add_executable (fancontrol-ng fancontrol-ng.c)
-target_link_libraries (fancontrol-ng ${project_libraries})
-
-add_executable (priod priod.c)
-target_link_libraries (priod ${project_libraries})
-
-add_executable (iexec iexec.c)
-target_link_libraries (iexec)
 
 if (WITH_GDM)
 	include_directories (${gdm_INCLUDE_DIRS})
 	add_executable (gdm-switch-user gdm-switch-user.c)
 	target_link_libraries (gdm-switch-user ${gdm_LIBRARIES})
 endif (WITH_GDM)
-
-add_executable (siprandom siprandom.c)
-target_link_libraries (siprandom ${project_libraries})
-
-add_executable (big-brother big-brother.c)
-target_link_libraries (big-brother ${project_libraries})
 
 # The files to be installed
 include (GNUInstallDirs)
