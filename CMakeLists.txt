@@ -6,7 +6,7 @@ if ("${CMAKE_C_COMPILER_ID}" MATCHES "GNU" OR CMAKE_COMPILER_IS_GNUCC)
 	# -Wunused-function is pretty annoying here, as everything is static
 	set (wdisabled "-Wno-unused-function")
 	set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=c99 -Wall -Wextra ${wdisabled}")
-endif ("${CMAKE_C_COMPILER_ID}" MATCHES "GNU" OR CMAKE_COMPILER_IS_GNUCC)
+endif ()
 
 # Dependencies
 set (CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/liberty/cmake)
@@ -26,19 +26,19 @@ include_directories (${PROJECT_BINARY_DIR})
 # Build
 foreach (name brightness fancontrol-ng iexec input-switch priod siprandom)
 	add_executable (${name} ${name}.c)
-endforeach (name)
+endforeach ()
 
 foreach (name big-brother paswitch wmstatus)
 	add_executable (${name} ${name}.c)
 	target_link_libraries (${name} ${dependencies_LIBRARIES})
-endforeach (name)
+endforeach ()
 add_threads (wmstatus)
 
 if (WITH_GDM)
 	include_directories (${gdm_INCLUDE_DIRS})
 	add_executable (gdm-switch-user gdm-switch-user.c)
 	target_link_libraries (gdm-switch-user ${gdm_LIBRARIES})
-endif (WITH_GDM)
+endif ()
 
 # The files to be installed
 include (GNUInstallDirs)
@@ -65,7 +65,7 @@ install (FILES
 
 if (WITH_GDM)
 	install (TARGETS gdm-switch-user DESTINATION ${CMAKE_INSTALL_BINDIR})
-endif (WITH_GDM)
+endif ()
 
 install (TARGETS wmstatus paswitch brightness input-switch fancontrol-ng priod
 	iexec siprandom DESTINATION ${CMAKE_INSTALL_BINDIR})
