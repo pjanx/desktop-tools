@@ -2195,14 +2195,16 @@ g_keys[] =
 	// This key should be labeled L on normal Qwert[yz] layouts
 	{ Mod4Mask,             XK_n,         on_lock,              0 },
 
+	// xmodmap | grep -e Alt_R -e Meta_R -e ISO_Level3_Shift -e Mode_switch
+	// can be used to figure out which modifier is AltGr
+
 	// MPD
 	{ Mod4Mask,             XK_Up,        on_mpd_play,          0 },
 	{ Mod4Mask,             XK_Down,      on_mpd_stop,          0 },
 	{ Mod4Mask,             XK_Left,      on_mpd_prev,          0 },
 	{ Mod4Mask,             XK_Right,     on_mpd_next,          0 },
-	/* xmodmap | grep -e Alt_R -e Meta_R -e ISO_Level3_Shift -e Mode_switch */
-	{ Mod4Mask | Mod5Mask,  XK_Left,      on_mpd_backward,      0 },
-	{ Mod4Mask | Mod5Mask,  XK_Right,     on_mpd_forward,       0 },
+	{ Mod4Mask | ShiftMask, XK_Left,      on_mpd_backward,      0 },
+	{ Mod4Mask | ShiftMask, XK_Right,     on_mpd_forward,       0 },
 	{ 0, XF86XK_AudioPlay,                on_mpd_play,          0 },
 	{ 0, XF86XK_AudioPrev,                on_mpd_prev,          0 },
 	{ 0, XF86XK_AudioNext,                on_mpd_next,          0 },
@@ -2234,13 +2236,15 @@ g_keys[] =
 	{ Mod4Mask,             XK_Insert,    on_volume_switch,     0 },
 	{ Mod4Mask,             XK_Delete,    on_volume_mute,       0 },
 	{ Mod4Mask,             XK_Page_Up,   on_volume_set,        5 },
-	{ Mod4Mask | Mod5Mask,  XK_Page_Up,   on_volume_set,        1 },
+	{ Mod4Mask | ShiftMask, XK_Page_Up,   on_volume_set,        1 },
 	{ Mod4Mask,             XK_Page_Down, on_volume_set,       -5 },
-	{ Mod4Mask | Mod5Mask,  XK_Page_Down, on_volume_set,       -1 },
+	{ Mod4Mask | ShiftMask, XK_Page_Down, on_volume_set,       -1 },
+	{ 0, XF86XK_AudioRaiseVolume,         on_volume_set,        5 },
+	{ ShiftMask, XF86XK_AudioRaiseVolume, on_volume_set,        1 },
+	{ 0, XF86XK_AudioLowerVolume,         on_volume_set,       -5 },
+	{ ShiftMask, XF86XK_AudioLowerVolume, on_volume_set,       -1 },
 	{ 0, XF86XK_AudioMicMute,             on_volume_mic_mute,   0 },
 	{ 0, XF86XK_AudioMute,                on_volume_mute,       0 },
-	{ 0, XF86XK_AudioRaiseVolume,         on_volume_set,        5 },
-	{ 0, XF86XK_AudioLowerVolume,         on_volume_set,       -5 },
 };
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
