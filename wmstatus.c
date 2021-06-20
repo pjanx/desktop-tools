@@ -2235,6 +2235,7 @@ g_keys[] =
 	// Volume
 	{ Mod4Mask,             XK_Insert,    on_volume_switch,     0 },
 	{ Mod4Mask,             XK_Delete,    on_volume_mute,       0 },
+	{ Mod4Mask | ShiftMask, XK_Delete,    on_volume_mic_mute,   0 },
 	{ Mod4Mask,             XK_Page_Up,   on_volume_set,        5 },
 	{ Mod4Mask | ShiftMask, XK_Page_Up,   on_volume_set,        1 },
 	{ Mod4Mask,             XK_Page_Down, on_volume_set,       -5 },
@@ -2243,8 +2244,8 @@ g_keys[] =
 	{ ShiftMask, XF86XK_AudioRaiseVolume, on_volume_set,        1 },
 	{ 0, XF86XK_AudioLowerVolume,         on_volume_set,       -5 },
 	{ ShiftMask, XF86XK_AudioLowerVolume, on_volume_set,       -1 },
-	{ 0, XF86XK_AudioMicMute,             on_volume_mic_mute,   0 },
 	{ 0, XF86XK_AudioMute,                on_volume_mute,       0 },
+	{ 0, XF86XK_AudioMicMute,             on_volume_mic_mute,   0 },
 };
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
