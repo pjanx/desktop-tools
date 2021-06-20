@@ -1,7 +1,7 @@
 /*
  * wmstatus.c: simple PulseAudio-enabled status setter for dwm and i3
  *
- * Copyright (c) 2015 - 2017, Přemysl Eric Janouch <p@janouch.name>
+ * Copyright (c) 2015 - 2021, Přemysl Eric Janouch <p@janouch.name>
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted.
@@ -31,6 +31,10 @@
 #include <dirent.h>
 #include <spawn.h>
 
+#ifdef BSD
+#include <sys/endian.h>
+#endif
+
 #include <X11/Xlib.h>
 #include <X11/keysym.h>
 #include <X11/XF86keysym.h>
@@ -41,6 +45,8 @@
 #include <pulse/error.h>
 #include <pulse/introspect.h>
 #include <pulse/subscribe.h>
+#include <pulse/stream.h>
+#include <pulse/sample.h>
 
 #include <dbus/dbus.h>
 
@@ -861,12 +867,22 @@ struct app_context
 
 	bool failed;                        ///< General PulseAudio failure
 
+	pa_sample_spec sink_sample_spec;    ///< Sink sample spec
 	pa_cvolume sink_volume;             ///< Current volume
 	bool sink_muted;                    ///< Currently muted?
 	struct strv sink_ports;             ///< All sink port names
 	char *sink_port_active;             ///< Active sink port
 
 	bool source_muted;                  ///< Currently muted?
+
+	// Noise playback:
+
+	struct poller_timer noise_timer;    ///< Update noise timer display, or stop
+	pa_stream *noise_stream;            ///< PulseAudio stream for noise playing
+	time_t noise_end_time;              ///< End time of noise production, or 0
+	float noise_state[2];               ///< Brownian noise state
+	int noise_fadeout_iterator;         ///< Fadeout iterator, in samples
+	int noise_fadeout_samples;          ///< Sample count for fadeout
 };
 
 static void
@@ -953,8 +969,9 @@ app_context_free (struct app_context *self)
 	poller_fd_reset (&self->x_event);
 	cstr_set (&self->layout, NULL);
 
-	if (self->context)  pa_context_unref (self->context);
-	if (self->dpy)      XCloseDisplay (self->dpy);
+	if (self->noise_stream)  pa_stream_unref (self->noise_stream);
+	if (self->context)       pa_context_unref (self->context);
+	if (self->dpy)           XCloseDisplay (self->dpy);
 
 	strv_free (&self->command_current);
 	if (self->command_pid != -1)
@@ -1173,6 +1190,14 @@ make_volume_status (struct app_context *ctx)
 	return str_steal (&s);
 }
 
+static char *
+make_noise_status (struct app_context *ctx)
+{
+	int diff = difftime (ctx->noise_end_time, time (NULL));
+	return xstrdup_printf ("\x01" "Playing noise" "\x01 (%d:%02d)",
+		diff / 3600, diff / 60 % 60);
+}
+
 static void
 refresh_status (struct app_context *ctx)
 {
@@ -1180,6 +1205,13 @@ refresh_status (struct app_context *ctx)
 
 	if (ctx->mpd_status)    ctx->backend->add (ctx->backend, ctx->mpd_status);
 	else if (ctx->mpd_song) ctx->backend->add (ctx->backend, ctx->mpd_song);
+
+	if (ctx->noise_end_time)
+	{
+		char *noise = make_noise_status (ctx);
+		ctx->backend->add (ctx->backend, noise);
+		free (noise);
+	}
 
 	if (ctx->failed)        ctx->backend->add (ctx->backend, "PA failure");
 	else
@@ -1851,6 +1883,160 @@ on_nut_reconnect (void *user_data)
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
+static inline float
+noise_next_brownian (float last)
+{
+	// Leaky integrators have a side effect on the signal, making noise white
+	// on the lower end of the spectrum, which can be heard as reduced rumbling
+	while (1)
+	{
+		// 0.9375 is the guaranteed to be safe value, not very pleasant
+		float f = last * 0.99 + ((double) rand () / RAND_MAX - 0.5) / 8;
+		if (f >= -1 && f <= 1)
+			return f;
+	}
+}
+
+static void
+noise_generate_stereo (struct app_context *ctx, int16_t *data, size_t n)
+{
+	float brown_l = ctx->noise_state[0];
+	float brown_r = ctx->noise_state[1];
+
+	for (size_t i = 0; i < n / 2; i++)
+	{
+		// We do not want to use a linear transition, and a decreasing geometric
+		// sequence would have a limit in infinity, so use powers of normalized
+		// time deltas--in particular 2 up to 6 are said to work
+		float gain = 1;
+		if (ctx->noise_fadeout_samples)
+		{
+			float remaining = (float) (ctx->noise_fadeout_samples
+				- ctx->noise_fadeout_iterator++) / ctx->noise_fadeout_samples;
+			if (remaining <= 0)
+				gain = 0;
+			else
+				gain = remaining * remaining;
+		}
+
+		data[i * 2 + 0] =
+			(brown_l = noise_next_brownian (brown_l)) * gain * INT16_MAX;
+		data[i * 2 + 1] =
+			(brown_r = noise_next_brownian (brown_r)) * gain * INT16_MAX;
+	}
+
+	ctx->noise_state[0] = brown_l;
+	ctx->noise_state[1] = brown_r;
+}
+
+static void
+noise_abort (struct app_context *ctx)
+{
+	ctx->noise_end_time = 0;
+	poller_timer_reset (&ctx->noise_timer);
+
+	if (ctx->noise_stream)
+	{
+		(void) pa_stream_disconnect (ctx->noise_stream);
+		pa_stream_unref (ctx->noise_stream);
+		ctx->noise_stream = NULL;
+	}
+}
+
+static void
+on_noise_writeable (pa_stream *stream, size_t nbytes, void *userdata)
+{
+	struct app_context *ctx = userdata;
+	int16_t data[nbytes / 2];
+	noise_generate_stereo (ctx, data, N_ELEMENTS (data));
+
+	int err;
+	if ((err = pa_stream_write (stream,
+		data, sizeof data, NULL, 0, PA_SEEK_RELATIVE)))
+	{
+		print_error ("noise playback failed: %s", pa_strerror (err));
+		noise_abort (ctx);
+	}
+}
+
+static const pa_sample_spec noise_default_spec =
+{
+	.channels = 2,
+	.format = BYTE_ORDER == LITTLE_ENDIAN ? PA_SAMPLE_S16LE : PA_SAMPLE_S16BE,
+	.rate = 48000,
+};
+
+static bool
+noise_start (struct app_context *ctx)
+{
+	if (!ctx->context)
+	{
+		print_error ("not playing noise, not connected to PulseAudio");
+		return false;
+	}
+
+	// Avoid unnecessary, and fairly CPU-intensive resampling
+	pa_sample_spec spec = noise_default_spec;
+	if (ctx->sink_sample_spec.rate == 44100)
+		spec.rate = ctx->sink_sample_spec.rate;
+
+	ctx->noise_stream =
+		pa_stream_new (ctx->context, PROGRAM_NAME "/noise", &spec, NULL);
+	pa_stream_set_write_callback (ctx->noise_stream, on_noise_writeable, ctx);
+
+	int err;
+	if ((err = pa_stream_connect_playback (ctx->noise_stream,
+		NULL, NULL, 0, NULL, NULL)))
+	{
+		print_error ("failed to connect noise playback stream: %s",
+			pa_strerror (err));
+		noise_abort (ctx);
+		return false;
+	}
+
+	time (&ctx->noise_end_time);
+	ctx->noise_state[0] = ctx->noise_state[1] = 0;
+	ctx->noise_fadeout_samples = 0;
+	ctx->noise_fadeout_iterator = 0;
+	return true;
+}
+
+static void
+on_noise_timer (void *user_data)
+{
+	struct app_context *ctx = user_data;
+	int diff = difftime (ctx->noise_end_time, time (NULL));
+	if (diff <= 0)
+		noise_abort (ctx);
+	else
+	{
+		poller_timer_set (&ctx->noise_timer, (diff % 60 + 1) * 1000);
+
+		// XXX: this is inaccurate, since we don't take into account buffering,
+		//   however it shouldn't pose a major issue
+		if (diff <= 60 && !ctx->noise_fadeout_samples)
+			ctx->noise_fadeout_samples =
+				diff * pa_stream_get_sample_spec (ctx->noise_stream)->rate;
+	}
+
+	refresh_status (ctx);
+}
+
+static void
+on_noise_adjust (struct app_context *ctx, int arg)
+{
+	ctx->noise_fadeout_samples = 0;
+	ctx->noise_fadeout_iterator = 0;
+	if (!ctx->noise_end_time && (arg < 0 || !noise_start (ctx)))
+		return;
+
+	// The granularity of noise playback is whole minutes
+	ctx->noise_end_time += arg * 60;
+	on_noise_timer (ctx);
+}
+
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
 #define DEFAULT_SOURCE "@DEFAULT_SOURCE@"
 #define DEFAULT_SINK   "@DEFAULT_SINK@"
 
@@ -1863,6 +2049,7 @@ on_sink_info (pa_context *context, const pa_sink_info *info, int eol,
 	if (info && !eol)
 	{
 		struct app_context *ctx = userdata;
+		ctx->sink_sample_spec = info->sample_spec;
 		ctx->sink_volume = info->volume;
 		ctx->sink_muted = !!info->mute;
 
@@ -1935,6 +2122,9 @@ on_context_state_change (pa_context *context, void *userdata)
 	{
 	case PA_CONTEXT_FAILED:
 	case PA_CONTEXT_TERMINATED:
+		// The stream depends on the context, and would keep its object alive
+		noise_abort (ctx);
+
 		ctx->failed = true;
 		refresh_status (ctx);
 
@@ -2199,53 +2389,57 @@ g_keys[] =
 	// can be used to figure out which modifier is AltGr
 
 	// MPD
-	{ Mod4Mask,             XK_Up,        on_mpd_play,          0 },
-	{ Mod4Mask,             XK_Down,      on_mpd_stop,          0 },
-	{ Mod4Mask,             XK_Left,      on_mpd_prev,          0 },
-	{ Mod4Mask,             XK_Right,     on_mpd_next,          0 },
-	{ Mod4Mask | ShiftMask, XK_Left,      on_mpd_backward,      0 },
-	{ Mod4Mask | ShiftMask, XK_Right,     on_mpd_forward,       0 },
-	{ 0, XF86XK_AudioPlay,                on_mpd_play,          0 },
-	{ 0, XF86XK_AudioPrev,                on_mpd_prev,          0 },
-	{ 0, XF86XK_AudioNext,                on_mpd_next,          0 },
+	{ Mod4Mask,               XK_Up,        on_mpd_play,          0 },
+	{ Mod4Mask,               XK_Down,      on_mpd_stop,          0 },
+	{ Mod4Mask,               XK_Left,      on_mpd_prev,          0 },
+	{ Mod4Mask,               XK_Right,     on_mpd_next,          0 },
+	{ Mod4Mask | ShiftMask,   XK_Left,      on_mpd_backward,      0 },
+	{ Mod4Mask | ShiftMask,   XK_Right,     on_mpd_forward,       0 },
+	{ 0, XF86XK_AudioPlay,                  on_mpd_play,          0 },
+	{ 0, XF86XK_AudioPrev,                  on_mpd_prev,          0 },
+	{ 0, XF86XK_AudioNext,                  on_mpd_next,          0 },
 
 	// Display input sources
-	{ Mod4Mask,             XK_F5,        on_input_switch,      0 },
-	{ Mod4Mask,             XK_F6,        on_input_switch,      1 },
-	{ Mod4Mask,             XK_F7,        on_input_switch,      2 },
-	{ Mod4Mask,             XK_F8,        on_input_switch,      3 },
+	{ Mod4Mask,               XK_F5,        on_input_switch,      0 },
+	{ Mod4Mask,               XK_F6,        on_input_switch,      1 },
+	{ Mod4Mask,               XK_F7,        on_input_switch,      2 },
+	{ Mod4Mask,               XK_F8,        on_input_switch,      3 },
 
 	// Keyboard groups
-	{ Mod4Mask,             XK_F9,        on_lock_group,        0 },
-	{ Mod4Mask,             XK_F10,       on_lock_group,        1 },
-	{ Mod4Mask,             XK_F11,       on_lock_group,        2 },
-	{ Mod4Mask,             XK_F12,       on_lock_group,        3 },
+	{ Mod4Mask,               XK_F9,        on_lock_group,        0 },
+	{ Mod4Mask,               XK_F10,       on_lock_group,        1 },
+	{ Mod4Mask,               XK_F11,       on_lock_group,        2 },
+	{ Mod4Mask,               XK_F12,       on_lock_group,        3 },
 
 	// Brightness
-	{ Mod4Mask,             XK_Home,      on_brightness,       10 },
-	{ Mod4Mask,             XK_End,       on_brightness,      -10 },
-	{ 0, XF86XK_MonBrightnessUp,          on_brightness,       10 },
-	{ 0, XF86XK_MonBrightnessDown,        on_brightness,      -10 },
+	{ Mod4Mask,               XK_Home,      on_brightness,       10 },
+	{ Mod4Mask,               XK_End,       on_brightness,      -10 },
+	{ 0, XF86XK_MonBrightnessUp,            on_brightness,       10 },
+	{ 0, XF86XK_MonBrightnessDown,          on_brightness,      -10 },
 
-	{ Mod4Mask,             XK_F4,        on_standby,           0 },
-	{ Mod4Mask | ShiftMask, XK_F4,        on_insomnia,          0 },
-	{ Mod4Mask,             XK_Pause,     on_standby,           0 },
-	{ Mod4Mask | ShiftMask, XK_Pause,     on_insomnia,          0 },
+	{ Mod4Mask,               XK_F4,        on_standby,           0 },
+	{ Mod4Mask | ShiftMask,   XK_F4,        on_insomnia,          0 },
+	{ Mod4Mask,               XK_Pause,     on_standby,           0 },
+	{ Mod4Mask | ShiftMask,   XK_Pause,     on_insomnia,          0 },
 
 	// Volume
-	{ Mod4Mask,             XK_Insert,    on_volume_switch,     0 },
-	{ Mod4Mask,             XK_Delete,    on_volume_mute,       0 },
-	{ Mod4Mask | ShiftMask, XK_Delete,    on_volume_mic_mute,   0 },
-	{ Mod4Mask,             XK_Page_Up,   on_volume_set,        5 },
-	{ Mod4Mask | ShiftMask, XK_Page_Up,   on_volume_set,        1 },
-	{ Mod4Mask,             XK_Page_Down, on_volume_set,       -5 },
-	{ Mod4Mask | ShiftMask, XK_Page_Down, on_volume_set,       -1 },
-	{ 0, XF86XK_AudioRaiseVolume,         on_volume_set,        5 },
-	{ ShiftMask, XF86XK_AudioRaiseVolume, on_volume_set,        1 },
-	{ 0, XF86XK_AudioLowerVolume,         on_volume_set,       -5 },
-	{ ShiftMask, XF86XK_AudioLowerVolume, on_volume_set,       -1 },
-	{ 0, XF86XK_AudioMute,                on_volume_mute,       0 },
-	{ 0, XF86XK_AudioMicMute,             on_volume_mic_mute,   0 },
+	{ Mod4Mask,               XK_Insert,    on_volume_switch,     0 },
+	{ Mod4Mask,               XK_Delete,    on_volume_mute,       0 },
+	{ Mod4Mask | ShiftMask,   XK_Delete,    on_volume_mic_mute,   0 },
+	{ Mod4Mask,               XK_Page_Up,   on_volume_set,        5 },
+	{ Mod4Mask | ShiftMask,   XK_Page_Up,   on_volume_set,        1 },
+	{ Mod4Mask,               XK_Page_Down, on_volume_set,       -5 },
+	{ Mod4Mask | ShiftMask,   XK_Page_Down, on_volume_set,       -1 },
+	{ 0, XF86XK_AudioRaiseVolume,           on_volume_set,        5 },
+	{ ShiftMask, XF86XK_AudioRaiseVolume,   on_volume_set,        1 },
+	{ 0, XF86XK_AudioLowerVolume,           on_volume_set,       -5 },
+	{ ShiftMask, XF86XK_AudioLowerVolume,   on_volume_set,       -1 },
+	{ 0, XF86XK_AudioMute,                  on_volume_mute,       0 },
+	{ 0, XF86XK_AudioMicMute,               on_volume_mic_mute,   0 },
+
+	// Noise playback
+	{ ControlMask, XF86XK_AudioRaiseVolume, on_noise_adjust,     60 },
+	{ ControlMask, XF86XK_AudioLowerVolume, on_noise_adjust,    -60 },
 };
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -2505,6 +2699,8 @@ main (int argc, char *argv[])
 		on_mpd_reconnect, &ctx);
 	poller_timer_init_and_set (&ctx.nut_reconnect, &ctx.poller,
 		on_nut_reconnect, &ctx);
+	poller_timer_init_and_set (&ctx.noise_timer, &ctx.poller,
+		on_noise_timer, &ctx);
 
 	init_xlib_events (&ctx);
 
