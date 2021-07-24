@@ -1,5 +1,5 @@
 /*
- * wmstatus.c: simple PulseAudio-enabled status setter for dwm and i3
+ * wmstatus.c: simple PulseAudio-enabled status setter for dwm and i3/sway
  *
  * Copyright (c) 2015 - 2021, Přemysl Eric Janouch <p@janouch.name>
  *
@@ -2637,7 +2637,7 @@ main (int argc, char *argv[])
 		{ 'd', "debug", NULL, 0, "run in debug mode" },
 		{ 'h', "help", NULL, 0, "display this help and exit" },
 		{ 'V', "version", NULL, 0, "output version information and exit" },
-		{ '3', "i3bar", NULL, 0, "print output for i3bar instead" },
+		{ '3', "i3bar", NULL, 0, "print output for i3bar/sway-bar instead" },
 		{ 'w', "write-default-cfg", "FILENAME",
 		  OPT_OPTIONAL_ARG | OPT_LONG_ONLY,
 		  "write a default configuration file and exit" },

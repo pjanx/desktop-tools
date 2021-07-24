@@ -5,9 +5,9 @@ desktop-tools
 'desktop-tools' is a collection of tools to run my desktop that might be useful
 to other people as well:
 
- - 'wmstatus' does literally everything my i3 doesn't but I'd like it to. It
-   includes PulseAudio volume management and hand-written NUT and MPD clients,
-   all in the name of liberation from GPL-licensed software of course
+ - 'wmstatus' does literally everything i3/sway don't but I'd like them to.
+   It includes PulseAudio volume management and custom-made NUT and MPD clients,
+   all in the name of liberation from GPL-licensed software, of course
  - 'paswitch' displays a list of all PulseAudio sinks and ports and allows
    switching between them, moving all playing inputs
  - 'brightness' allows me to change the brightness of w/e display device I have
