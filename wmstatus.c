@@ -1022,13 +1022,14 @@ read_value (int dir, const char *filename, struct error **e)
 		return NULL;
 	}
 
+	errno = 0;
 	struct str s = str_make ();
-	bool success = read_line (fp, &s);
+	bool success = read_line (fp, &s) && !ferror (fp);
 	fclose (fp);
 
 	if (!success)
 	{
-		error_set (e, "%s: %s", filename, "read failed");
+		error_set (e, "%s: %s", filename, errno ? strerror (errno) : "EOF");
 		return NULL;
 	}
 	return str_steal (&s);
@@ -1043,42 +1044,61 @@ read_number (int dir, const char *filename, struct error **e)
 
 	unsigned long number = 0;
 	if (!xstrtoul (&number, value, 10))
-		error_set (e, "%s: %s", filename, "doesn't contain an unsigned number");
+		error_set (e, "%s: %s", filename, "doesn't contain a valid number");
 	free (value);
 	return number;
 }
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
-static char *
-read_battery_status (int dir, struct error **e)
+static int
+read_battery_charge (int dir)
 {
-	char *result = NULL;
 	struct error *error = NULL;
+	double capacity, now, full;
+	if ((capacity = read_number (dir, "capacity",    &error), !error))
+		return capacity;
 
-	char *status;
-	double charge_now;
-	double charge_full;
+	error_free (error);
+	if ((now      = read_number (dir, "charge_now",  &error), !error)
+	 && (full     = read_number (dir, "charge_full", &error), !error))
+		return now / full * 100 + 0.5;
 
-	if ((status      = read_value  (dir, "status",      &error), error)
-	 || (charge_now  = read_number (dir, "charge_now",  &error), error)
-	 || (charge_full = read_number (dir, "charge_full", &error), error))
-		error_propagate (e, error);
+	error_free (error);
+	return -1;
+}
+
+static char *
+read_battery_status (int dir, char **type)
+{
+	// We present errors to the user, don't fill up the session's log.
+	struct error *error = NULL;
+	struct str s = str_make ();
+
+	// Dell is being unreasonable and seems to set charge_now
+	// to charge_full_design when the battery is fully charged
+	int charge = read_battery_charge (dir);
+	if (charge >= 0 && charge <= 100)
+		str_append_printf (&s, "%u%%", charge);
+
+	char *status = NULL;
+	char *model_name = read_value (dir, "model_name", NULL);
+	if (model_name)
+	{
+		model_name[strcspn (model_name, " ")] = 0;
+		cstr_set (type, model_name);
+	}
+	else if ((status = read_value (dir, "status", &error), !error))
+	{
+		str_append_printf (&s, " (%s)", status);
+		free (status);
+	}
 	else
 	{
-		struct str s = str_make ();
-		str_append (&s, status);
-
-		// Dell is being unreasonable and seems to set charge_now
-		// to charge_full_design when the battery is fully charged
-		unsigned percentage = charge_now / charge_full * 100 + 0.5;
-		if (percentage < 100)
-			str_append_printf (&s, " (%u%%)", percentage);
-		result = str_steal (&s);
+		str_append_printf (&s, " (%s)", strerror (errno));
+		error_free (error);
 	}
-
-	free (status);
-	return result;
+	return str_steal (&s);
 }
 
 static char *
@@ -1094,14 +1114,13 @@ try_power_supply (int dir, struct error **e)
 
 	bool is_relevant =
 		!strcmp (type, "Battery") ||
+		!strcmp (type, "USB") ||
 		!strcmp (type, "UPS");
 
 	char *result = NULL;
 	if (is_relevant)
 	{
-		char *status = read_battery_status (dir, &error);
-		if (error)
-			error_propagate (e, error);
+		char *status = read_battery_status (dir, &type);
 		if (status)
 			result = xstrdup_printf ("%s %s", type, status);
 		free (status);
@@ -1122,8 +1141,8 @@ make_battery_status (void)
 	}
 
 	struct dirent *entry;
-	char *status = NULL;
-	while (!status && (entry = readdir (power_supply)))
+	struct strv batteries = strv_make ();
+	while ((entry = readdir (power_supply)))
 	{
 		const char *device_name = entry->d_name;
 		if (device_name[0] == '.')
@@ -1137,8 +1156,11 @@ make_battery_status (void)
 		}
 
 		struct error *error = NULL;
-		status = try_power_supply (dir, &error);
+		char *status = try_power_supply (dir, &error);
 		close (dir);
+
+		if (status)
+			strv_append_owned (&batteries, status);
 		if (error)
 		{
 			print_error ("%s: %s", device_name, error->message);
@@ -1146,7 +1168,10 @@ make_battery_status (void)
 		}
 	}
 	closedir (power_supply);
-	return status;
+
+	char *result = batteries.len ? strv_join (&batteries, " ") : NULL;
+	strv_free (&batteries);
+	return result;
 }
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
