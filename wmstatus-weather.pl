@@ -6,45 +6,55 @@
 use strict;
 use warnings;
 use Time::Piece;
-use IO::Socket::INET;
+use File::Basename;
 
-my $host = 'www.yr.no';
-my $path = '/place/Czech_Republic/Prague/Prague/forecast.xml';
+# Retrieve current weather information from the Norwegian weather service,
+# see https://api.met.no/doc/ for its documentation
+my $base = 'https://api.met.no/weatherapi';
+my $agent = basename($0) =~ s/[^-!#$%&'*+.^_`|~[:alnum:]]//gr;
 
-# Retrieve current weather information from the Norwegian weather service
-sub weather {
-	# There are no redirects and it's not exactly confidential either
-	my $sock = IO::Socket::INET->new(
-		PeerAddr => $host,
-		PeerPort => 'http(80)',
-		Proto => 'tcp'
-	) or return '?';
+# https://www.yr.no/storage/lookup/English.csv.zip
+my $where = 'lat=50.08804&lon=14.42076&altitude=202';  # Prague
+my %legends;
 
-	print $sock "GET $path HTTP/1.1\r\n"
-		. "Host: $host\r\n"
-		. "Connection: close\r\n\r\n";
-
-	# Quick and dirty XML parsing is more than fine for our purpose
-	my ($offset, $acceptable, $temp, $symbol) = (0, 0);
-	while (<$sock>) {
-		$offset = $1 * 60 if /utcoffsetMinutes="(.+?)"/;
-		next unless /<time/ .. /<\/time/;
-
-		# It gives forecast, so it doesn't necessarily contain the present;
-		# just pick the first thing that's no longer invalid
-		if (/from="(.+?)" to="(.+?)"/) {
-			$acceptable = Time::Piece->strptime($2, '%Y-%m-%dT%H:%M:%S')
-				- $offset >= gmtime;
-		}
-		if ($acceptable) {
-			$symbol = $1 if /<symbol .* name="(.+?)"/;
-			$temp = "$2 °${\uc $1}"
-				if /<temperature unit="(.).+?" value="(.+?)"/;
-		}
-		return "$temp ($symbol)" if $temp && $symbol;
-	}
-	return 'Weather error';
+sub retrieve_legends {
+	# HTTP/Tiny supports TLS, but with non-core IO::Socket::SSL, so use cURL
+	open(my $sock, '-|', 'curl', '-sSA', $agent,
+		"$base/weathericon/2.0/legends.txt") or return $!;
+	while (local $_ = <$sock>) { $legends{$1} = $2 if /^(.+?),(.+?),/ }
+	close($sock);
 }
 
-# We need to be careful not to overload the service so that they don't ban us
+sub weather {
+	# We might want to rewrite this to use the JSON API (/compact),
+	# see https://developer.yr.no/doc/guides/getting-started-from-forecast-xml
+	open(my $sock, '-|', 'curl', '-sA', $agent,
+		"$base/locationforecast/2.0/classic?$where") or return $!;
+
+	# Quick and dirty XML parsing is more than fine for our purpose
+	my ($acceptable, $temp, $symbol) = (0, undef, undef);
+	while (<$sock>) {
+		next unless m|<time| .. m|</time|;
+
+		# It gives forecast, so it doesn't necessarily contain the present;
+		# just process the earliest entries that aren't yet invalid
+		$acceptable = Time::Piece->strptime($2, '%Y-%m-%dT%H:%M:%SZ') >= gmtime
+			if /from="(.+?)" to="(.+?)"/;
+		next unless $acceptable;
+
+		# Temperature comes from a zero-length time interval, separately
+		$symbol = $1 if /<symbol.*? code="([^_"]+)/;
+		$temp = "$2 °" . uc $1 if /<temperature.*? unit="(.).+?" value="(.+?)"/;
+		if ($temp && $symbol) {
+			retrieve_legends if !%legends;
+
+			close($sock);
+			return "$temp (" . ($legends{$symbol} || $symbol) . ")";
+		}
+	}
+	close($sock);
+	return "No weather ($?)";
+}
+
+# Be careful not to overload the service so that they don't ban us
 binmode STDOUT; $| = 1; while (1) { print weather() . "\n\n"; sleep 3600; }
