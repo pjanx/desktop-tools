@@ -7,3 +7,5 @@
 /desktop-tools.files
 /desktop-tools.creator*
 /desktop-tools.includes
+/desktop-tools.cflags
+/desktop-tools.cxxflags
