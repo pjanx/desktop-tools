@@ -2305,8 +2305,11 @@ static void
 on_input_switch (struct app_context *ctx, int arg)
 {
 	(void) ctx;
-	char *values[] = { "vga", "dvi", "dp", "hdmi" };
-	char *argv[] = { "input-switch", values[arg], NULL };
+
+	char *values[] = { "vga", "dvi", "hdmi", "dp", "tb" },
+		*numbers[] = { "1", "2" };
+	char *argv[] = { "input-switch",
+		values[arg & 0xf], numbers[arg >> 4], NULL };
 	spawn (argv);
 }
 
@@ -2424,17 +2427,24 @@ g_keys[] =
 	{ 0, XF86XK_AudioPrev,                  on_mpd_prev,          0 },
 	{ 0, XF86XK_AudioNext,                  on_mpd_next,          0 },
 
-	// Display input sources
-	{ Mod4Mask,               XK_F5,        on_input_switch,      0 },
-	{ Mod4Mask,               XK_F6,        on_input_switch,      1 },
-	{ Mod4Mask,               XK_F7,        on_input_switch,      2 },
-	{ Mod4Mask,               XK_F8,        on_input_switch,      3 },
-
 	// Keyboard groups
-	{ Mod4Mask,               XK_F9,        on_lock_group,        0 },
-	{ Mod4Mask,               XK_F10,       on_lock_group,        1 },
-	{ Mod4Mask,               XK_F11,       on_lock_group,        2 },
-	{ Mod4Mask,               XK_F12,       on_lock_group,        3 },
+	{ Mod4Mask,               XK_F1,        on_lock_group,        0 },
+	{ Mod4Mask,               XK_F2,        on_lock_group,        1 },
+	{ Mod4Mask,               XK_F3,        on_lock_group,        2 },
+	{ Mod4Mask,               XK_F4,        on_lock_group,        3 },
+
+#define CSMask (ControlMask | ShiftMask)
+
+	// Display input sources
+	{ Mod4Mask | ControlMask, XK_F1,        on_input_switch,      0 },
+	{ Mod4Mask | CSMask,      XK_F1,        on_input_switch, 16 | 0 },
+	{ Mod4Mask | ControlMask, XK_F2,        on_input_switch,      1 },
+	{ Mod4Mask | CSMask,      XK_F2,        on_input_switch, 16 | 1 },
+	{ Mod4Mask | ControlMask, XK_F3,        on_input_switch,      2 },
+	{ Mod4Mask | CSMask,      XK_F3,        on_input_switch, 16 | 2 },
+	{ Mod4Mask | ControlMask, XK_F4,        on_input_switch,      3 },
+	{ Mod4Mask | CSMask,      XK_F4,        on_input_switch, 16 | 3 },
+	{ Mod4Mask | ControlMask, XK_F5,        on_input_switch,      4 },
 
 	// Brightness
 	{ Mod4Mask,               XK_Home,      on_brightness,       10 },
@@ -2442,8 +2452,8 @@ g_keys[] =
 	{ 0, XF86XK_MonBrightnessUp,            on_brightness,       10 },
 	{ 0, XF86XK_MonBrightnessDown,          on_brightness,      -10 },
 
-	{ Mod4Mask,               XK_F4,        on_standby,           0 },
-	{ Mod4Mask | ShiftMask,   XK_F4,        on_insomnia,          0 },
+	{ Mod4Mask,               XK_F5,        on_standby,           0 },
+	{ Mod4Mask | ShiftMask,   XK_F5,        on_insomnia,          0 },
 	{ Mod4Mask,               XK_Pause,     on_standby,           0 },
 	{ Mod4Mask | ShiftMask,   XK_Pause,     on_insomnia,          0 },
 
