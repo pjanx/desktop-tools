@@ -116,6 +116,7 @@ g_inputs[] =
 	{ 0x10, "dp",        2, },          // DisplayPort 2
 	{ 0x11, "hdmi",      1, },          // Digital Video (TMDS) 3 HDMI 1
 	{ 0x12, "hdmi",      2, },          // Digital Video (TMDS) 4 HDMI 2
+	{ 0x15, "tb",        1, },          // Thunderbolt on BenQ PD3220U (no spec)
 };
 
 int
