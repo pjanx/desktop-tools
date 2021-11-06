@@ -2306,7 +2306,7 @@ on_input_switch (struct app_context *ctx, int arg)
 {
 	(void) ctx;
 
-	char *values[] = { "vga", "dvi", "hdmi", "dp", "tb" },
+	char *values[] = { "vga", "dvi", "hdmi", "dp" },
 		*numbers[] = { "1", "2" };
 	char *argv[] = { "input-switch",
 		values[arg & 0xf], numbers[arg >> 4], NULL };
@@ -2444,7 +2444,6 @@ g_keys[] =
 	{ Mod4Mask | CSMask,      XK_F3,        on_input_switch, 16 | 2 },
 	{ Mod4Mask | ControlMask, XK_F4,        on_input_switch,      3 },
 	{ Mod4Mask | CSMask,      XK_F4,        on_input_switch, 16 | 3 },
-	{ Mod4Mask | ControlMask, XK_F5,        on_input_switch,      4 },
 
 	// Brightness
 	{ Mod4Mask,               XK_Home,      on_brightness,       10 },

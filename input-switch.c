@@ -30,6 +30,8 @@
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
+typedef bool (*ActionFunc) (int fd, int param, struct error **);
+
 static bool
 set_input_source (int fd, int input, struct error **e)
 {
@@ -49,8 +51,31 @@ set_input_source (int fd, int input, struct error **e)
 	return true;
 }
 
+
+static bool
+set_bnq_kvm (int fd, int kvm, struct error **e)
+{
+	// This function does a leap of faith, should check the actual manufacturer
+	enum { VCP_BNQ_KVM = 0xE4 };
+
+	struct vcp_feature_readout readout = {};
+	if (!vcp_get_feature (fd, VCP_BNQ_KVM, &readout, e))
+		return false;
+	if (kvm < 0 || kvm > readout.max)
+		return error_set (e, "KVM index out of range");
+
+	uint8_t set_req[] = { VCP_BNQ_KVM, kvm >> 8, kvm };
+	if (!ddc_send (fd, DDC_SET_VCP_FEATURE, set_req, sizeof set_req, e))
+		return false;
+
+	wait_ms (50);
+
+	printf ("KVM set from %d to %d of %d\n", readout.cur, kvm, readout.max);
+	return true;
+}
+
 static void
-i2c (int input)
+i2c (ActionFunc action, int param)
 {
 	DIR *dev = opendir ("/dev");
 	if (!dev)
@@ -76,7 +101,7 @@ i2c (int input)
 
 		struct error *e = NULL;
 		if (!is_a_display (fd, &e)
-		 || !set_input_source (fd, input, &e))
+		 || !action (fd, param, &e))
 		{
 			printf ("%s\n", e->message);
 			error_free (e);
@@ -116,7 +141,7 @@ g_inputs[] =
 	{ 0x10, "dp",        2, },          // DisplayPort 2
 	{ 0x11, "hdmi",      1, },          // Digital Video (TMDS) 3 HDMI 1
 	{ 0x12, "hdmi",      2, },          // Digital Video (TMDS) 4 HDMI 2
-	{ 0x15, "tb",        1, },          // Thunderbolt on BenQ PD3220U (no spec)
+	{ 0x15, "bnq-tb",    1, },          // Thunderbolt on BenQ PD3220U (no spec)
 };
 
 int
@@ -133,13 +158,21 @@ main (int argc, char *argv[])
 	unsigned long input_source = 0;
 	if (xstrtoul (&input_source, argv[1], 10))
 	{
-		i2c (input_source);
+		i2c (set_input_source, input_source);
 		exit (EXIT_SUCCESS);
 	}
 
 	unsigned long index = 1;
 	if (argc > 2 && !xstrtoul (&index, argv[2], 10))
 		exit_fatal ("given index is not a number: %s", argv[2]);
+
+	// Manufacturer-specific, argument currently necessary, but we could rotate
+	if (argc > 2 && !strcasecmp (argv[1], "bnq-kvm"))
+	{
+		i2c (set_bnq_kvm, index);
+		exit (EXIT_SUCCESS);
+	}
+
 	for (size_t i = 0; i < N_ELEMENTS (g_inputs); i++)
 		if (!strcasecmp_ascii (g_inputs[i].name, argv[1])
 		 && g_inputs[i].index == (int) index)
@@ -147,7 +180,6 @@ main (int argc, char *argv[])
 	if (!input_source)
 		exit_fatal ("unknown input source: %s %lu", argv[1], index);
 
-	i2c (input_source);
+	i2c (set_input_source, input_source);
 	return 0;
 }
-
