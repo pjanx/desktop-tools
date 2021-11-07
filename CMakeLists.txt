@@ -1,11 +1,14 @@
-cmake_minimum_required (VERSION 3.0)
-project (desktop-tools VERSION 0.1.0 LANGUAGES C)
+cmake_minimum_required (VERSION 3.10)
+project (desktop-tools VERSION 0.1.0 DESCRIPTION "Desktop tools" LANGUAGES C)
 
 # Moar warnings
+set (CMAKE_C_STANDARD 99)
+set (CMAKE_C_STANDARD_REQUIRED ON)
+set (CMAKE_C_EXTENSIONS OFF)
+
 if ("${CMAKE_C_COMPILER_ID}" MATCHES "GNU" OR CMAKE_COMPILER_IS_GNUCC)
 	# -Wunused-function is pretty annoying here, as everything is static
-	set (wdisabled "-Wno-unused-function")
-	set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=c99 -Wall -Wextra ${wdisabled}")
+	set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -Wno-unused-function")
 endif ()
 
 # Dependencies
@@ -73,7 +76,6 @@ install (PROGRAMS shellify DESTINATION ${CMAKE_INSTALL_BINDIR})
 install (FILES LICENSE DESTINATION ${CMAKE_INSTALL_DOCDIR})
 
 # CPack
-set (CPACK_PACKAGE_DESCRIPTION_SUMMARY "Desktop tools")
 set (CPACK_PACKAGE_VENDOR "Premysl Eric Janouch")
 set (CPACK_PACKAGE_CONTACT "Přemysl Eric Janouch <p@janouch.name>")
 set (CPACK_RESOURCE_FILE_LICENSE "${PROJECT_SOURCE_DIR}/LICENSE")
