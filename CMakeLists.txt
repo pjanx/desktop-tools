@@ -16,29 +16,50 @@ set (CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/liberty/cmake)
 include (AddThreads)
 
 find_package (PkgConfig REQUIRED)
-pkg_check_modules (dependencies REQUIRED libpulse x11 xext xextproto dbus-1)
+pkg_check_modules (x REQUIRED x11 xext xextproto)
+pkg_check_modules (pulse REQUIRED libpulse)
+pkg_check_modules (dbus REQUIRED dbus-1)
 pkg_check_modules (gdm gdm glib-2.0 gio-2.0)
-include_directories (${dependencies_INCLUDE_DIRS})
+include_directories (
+	${x_INCLUDE_DIRS} ${pulse_INCLUDE_DIRS} ${dbus_INCLUDE_DIRS})
+link_directories (
+	${x_LIBRARY_DIRS} ${pulse_LIBRARY_DIRS} ${dbus_LIBRARY_DIRS})
 
 option (WITH_GDM "Compile with GDM support" ${gdm_FOUND})
 
 # Generate a configuration file
-configure_file (${PROJECT_SOURCE_DIR}/config.h.in ${PROJECT_BINARY_DIR}/config.h)
+configure_file (${PROJECT_SOURCE_DIR}/config.h.in
+	${PROJECT_BINARY_DIR}/config.h)
 include_directories (${PROJECT_BINARY_DIR})
 
 # Build
-foreach (name brightness fancontrol-ng iexec input-switch priod siprandom)
+set (targets wmstatus paswitch siprandom big-brother)
+if ("${CMAKE_SYSTEM_NAME}" STREQUAL Linux)
+	# These use Linux i2c APIs, but can be made to work on macOS
+	list (APPEND targets brightness input-switch)
+	# Only iexec could be made to use kqueue
+	list (APPEND targets fancontrol-ng priod iexec)
+elseif ("${CMAKE_SYSTEM_NAME}" MATCHES BSD)
+	# Need this for SIGWINCH in FreeBSD and OpenBSD respectively;
+	# our POSIX version macros make it undefined
+	add_definitions (-D__BSD_VISIBLE=1 -D_BSD_SOURCE=1)
+elseif (APPLE)
+	add_definitions (-D_DARWIN_C_SOURCE)
+endif ()
+
+foreach (name ${targets})
 	add_executable (${name} ${name}.c)
 endforeach ()
 
-foreach (name big-brother paswitch wmstatus)
-	add_executable (${name} ${name}.c)
-	target_link_libraries (${name} ${dependencies_LIBRARIES})
-endforeach ()
+target_link_libraries (big-brother ${x_LIBRARIES})
+target_link_libraries (paswitch ${pulse_LIBRARIES})
+target_link_libraries (wmstatus
+	${x_LIBRARIES} ${pulse_LIBRARIES} ${dbus_LIBRARIES})
 add_threads (wmstatus)
 
 if (WITH_GDM)
 	include_directories (${gdm_INCLUDE_DIRS})
+	link_directories (${gdm_LIBRARY_DIRS})
 	add_executable (gdm-switch-user gdm-switch-user.c)
 	target_link_libraries (gdm-switch-user ${gdm_LIBRARIES})
 endif ()
@@ -70,8 +91,8 @@ if (WITH_GDM)
 	install (TARGETS gdm-switch-user DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif ()
 
-install (TARGETS wmstatus paswitch brightness input-switch fancontrol-ng priod
-	iexec siprandom DESTINATION ${CMAKE_INSTALL_BINDIR})
+list (REMOVE_ITEM targets big-brother)
+install (TARGETS ${targets} DESTINATION ${CMAKE_INSTALL_BINDIR})
 install (PROGRAMS shellify DESTINATION ${CMAKE_INSTALL_BINDIR})
 install (FILES LICENSE DESTINATION ${CMAKE_INSTALL_DOCDIR})
 

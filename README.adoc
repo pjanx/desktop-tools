@@ -28,12 +28,11 @@ to other people as well:
  - 'big-brother' tracks the title of the active window and the idle state of
    the user and writes these events to standard output.
 
-Don't expect them to work under any OS that isn't Linux.
+Few of them are useful outside of Linux.
 
 Packages
 --------
-Regular releases are sporadic.  git master should be stable enough.  You can get
-a package with the latest development version from Archlinux's AUR.
+Regular releases are sporadic.  git master should be stable enough.
 
 Building
 --------
