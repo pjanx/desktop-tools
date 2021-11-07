@@ -26,7 +26,7 @@
 #undef PROGRAM_NAME
 #define PROGRAM_NAME "paswitch"
 #include "liberty/liberty.c"
-#include "poller-pa.c"
+#include "liberty/liberty-pulse.c"
 
 #include <locale.h>
 #include <wchar.h>
