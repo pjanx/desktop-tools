@@ -59,9 +59,6 @@ struct pa_defer_event
 struct poller_pa
 {
 	struct poller *poller;              ///< The underlying event loop
-	int result;                         ///< Result on quit
-	bool running;                       ///< Not quitting
-
 	pa_io_event *io_list;               ///< I/O events
 	pa_time_event *time_list;           ///< Timer events
 	pa_defer_event *defer_list;         ///< Deferred events
@@ -293,9 +290,11 @@ poller_pa_defer_set_destroy (pa_defer_event *self,
 static void
 poller_pa_quit (pa_mainloop_api *api, int retval)
 {
-	struct poller_pa *data = api->userdata;
-	data->result = retval;
-	data->running = false;
+	(void) api;
+	(void) retval;
+
+	// This is not called from within libpulse
+	hard_assert (!"quitting the libpulse event loop is unimplemented");
 }
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -346,16 +345,4 @@ poller_pa_destroy (struct pa_mainloop_api *api)
 
 	free (data);
 	free (api);
-}
-
-/// Since our poller API doesn't care much about continuous operation,
-/// we need to provide that in the PulseAudio abstraction itself
-static int
-poller_pa_run (struct pa_mainloop_api *api)
-{
-	struct poller_pa *data = api->userdata;
-	data->running = true;
-	while (data->running)
-		poller_run (data->poller);
-	return data->result;
 }

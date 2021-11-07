@@ -143,6 +143,7 @@ struct app_context
 	struct poller_timer tty_timer;      ///< Terminal input timeout
 	struct str tty_input_buffer;        ///< Buffered terminal input
 
+	bool quitting;                      ///< Quitting requested
 	pa_mainloop_api *api;               ///< PulseAudio event loop proxy
 	pa_context *context;                ///< PulseAudio connection context
 
@@ -683,7 +684,7 @@ on_action (struct app_context *ctx, enum action action)
 		break;
 
 	case ACTION_QUIT:
-		poller_pa_quit (ctx->api, 0);
+		ctx->quitting = true;
 	case ACTION_NONE:
 		break;
 	}
@@ -910,7 +911,7 @@ on_signal_pipe_readable (const struct pollfd *pfd, struct app_context *ctx)
 	(void) read (pfd->fd, &id, 1);
 
 	if (id == SIGINT || id == SIGTERM || id == SIGHUP)
-		poller_pa_quit (ctx->api, 0);
+		ctx->quitting = true;
 	else if (id == SIGWINCH)
 		poller_idle_set (&ctx->redraw_event);
 	else
@@ -1068,7 +1069,9 @@ main (int argc, char *argv[])
 	poller_timer_init_and_set (&ctx.make_context, &ctx.poller,
 		on_make_context, &ctx);
 
-	int status = poller_pa_run (ctx.api);
+	while (!ctx.quitting)
+		poller_run (&ctx.poller);
+
 	app_context_free (&ctx);
-	return status;
+	return 0;
 }

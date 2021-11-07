@@ -2745,7 +2745,8 @@ main (int argc, char *argv[])
 
 	if (ctx.backend->start)
 		ctx.backend->start (ctx.backend);
-	poller_pa_run (ctx.api);
+	while (true)
+		poller_run (&ctx.poller);
 	if (ctx.backend->stop)
 		ctx.backend->stop (ctx.backend);
 
