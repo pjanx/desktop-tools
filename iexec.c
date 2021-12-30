@@ -102,7 +102,7 @@ main (int argc, char *argv[])
 	};
 
 	struct opt_handler oh = opt_handler_make (argc, argv, opts,
-		"PROGRAM [ARG...]", "Run a program and restart on file change.");
+		"PROGRAM [ARG...]", "Run a program and restart it when it changes.");
 
 	// We have to turn that off as it causes more trouble than what it's worth
 	cstr_set (&oh.opt_string, xstrdup_printf ("+%s", oh.opt_string));
