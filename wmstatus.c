@@ -1112,6 +1112,15 @@ try_power_supply (int dir, struct error **e)
 		return NULL;
 	}
 
+	bool offline = !read_number (dir, "online", &error);
+	if (error)
+	{
+		error_free (error);
+		error = NULL;
+	}
+	else if (offline)
+		return NULL;
+
 	bool is_relevant =
 		!strcmp (type, "Battery") ||
 		!strcmp (type, "USB") ||
