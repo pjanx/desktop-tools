@@ -1,7 +1,7 @@
 /*
  * input-switch.c: switches display input via DDC/CI
  *
- * Copyright (c) 2017, Přemysl Eric Janouch <p@janouch.name>
+ * Copyright (c) 2017 - 2022, Přemysl Eric Janouch <p@janouch.name>
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted.
@@ -28,9 +28,58 @@
 #include "ddc-ci.c"
 #include <dirent.h>
 
+// This list is from the MCCS 2.2a specification
+struct
+{
+	int code;                           ///< Input code
+	const char *name;                   ///< Input name
+	int index;                          ///< Input index
+}
+g_inputs[] =
+{
+	{ 0x01, "VGA",       1, },          // Analog video (R/G/B) 1
+	{ 0x02, "VGA",       2, },          // Analog video (R/G/B) 2
+	{ 0x03, "DVI",       1, },          // Digital video (TMDS) 1 DVI 1
+	{ 0x04, "DVI",       2, },          // Digital video (TMDS) 2 DVI 2
+	{ 0x05, "composite", 1, },          // Composite video 1
+	{ 0x06, "composite", 2, },          // Composite video 2
+	{ 0x07, "S-Video",   1, },          // S-video 1
+	{ 0x08, "S-Video",   2, },          // S-video 2
+	{ 0x09, "tuner",     1, },          // Tuner 1
+	{ 0x0A, "tuner",     2, },          // Tuner 2
+	{ 0x0B, "tuner",     3, },          // Tuner 3
+	{ 0x0C, "component", 1, },          // Component video (YPbPr/YCbCr) 1
+	{ 0x0D, "component", 2, },          // Component video (YPbPr/YCbCr) 2
+	{ 0x0E, "component", 3, },          // Component video (YPbPr/YCbCr) 3
+	{ 0x0F, "DP",        1, },          // DisplayPort 1
+	{ 0x10, "DP",        2, },          // DisplayPort 2
+	{ 0x11, "HDMI",      1, },          // Digital Video (TMDS) 3 HDMI 1
+	{ 0x12, "HDMI",      2, },          // Digital Video (TMDS) 4 HDMI 2
+	{ 0x15, "bnq-tb",    1, },          // Thunderbolt on BenQ PD3220U (no spec)
+};
+
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
 typedef bool (*ActionFunc) (int fd, int param, struct error **);
+
+static bool
+get_input_source (int fd, int input, struct error **e)
+{
+	struct vcp_feature_readout readout = {};
+	if (!vcp_get_feature (fd, VCP_INPUT_SOURCE, &readout, e))
+		return false;
+
+	(void) input;
+	for (size_t i = 0; i < N_ELEMENTS (g_inputs); i++)
+		if (g_inputs[i].code == readout.cur)
+		{
+			printf ("input is %s %d\n", g_inputs[i].name, g_inputs[i].index);
+			return true;
+		}
+
+	printf ("input is %d\n", readout.cur);
+	return true;
+}
 
 static bool
 set_input_source (int fd, int input, struct error **e)
@@ -114,36 +163,6 @@ i2c (ActionFunc action, int param)
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
-// This list is from the MCCS 2.2a specification
-struct
-{
-	int code;                           ///< Input code
-	const char *name;                   ///< Input name
-	int index;                          ///< Input index
-}
-g_inputs[] =
-{
-	{ 0x01, "vga",       1, },          // Analog video (R/G/B) 1
-	{ 0x02, "vga",       2, },          // Analog video (R/G/B) 2
-	{ 0x03, "dvi",       1, },          // Digital video (TMDS) 1 DVI 1
-	{ 0x04, "dvi",       2, },          // Digital video (TMDS) 2 DVI 2
-	{ 0x05, "composite", 1, },          // Composite video 1
-	{ 0x06, "composite", 2, },          // Composite video 2
-	{ 0x07, "s-video",   1, },          // S-video 1
-	{ 0x08, "s-video",   2, },          // S-video 2
-	{ 0x09, "tuner",     1, },          // Tuner 1
-	{ 0x0A, "tuner",     2, },          // Tuner 2
-	{ 0x0B, "tuner",     3, },          // Tuner 3
-	{ 0x0C, "component", 1, },          // Component video (YPbPr/YCbCr) 1
-	{ 0x0D, "component", 2, },          // Component video (YPbPr/YCbCr) 2
-	{ 0x0E, "component", 3, },          // Component video (YPbPr/YCbCr) 3
-	{ 0x0F, "dp",        1, },          // DisplayPort 1
-	{ 0x10, "dp",        2, },          // DisplayPort 2
-	{ 0x11, "hdmi",      1, },          // Digital Video (TMDS) 3 HDMI 1
-	{ 0x12, "hdmi",      2, },          // Digital Video (TMDS) 4 HDMI 2
-	{ 0x15, "bnq-tb",    1, },          // Thunderbolt on BenQ PD3220U (no spec)
-};
-
 int
 main (int argc, char *argv[])
 {
@@ -151,8 +170,13 @@ main (int argc, char *argv[])
 
 	if (argc <= 1)
 	{
-		printf ("Usage: %s <input> [<index>]\n", argv[0]);
+		printf ("Usage: %s {? | INPUT [INDEX]}\n", argv[0]);
 		exit (EXIT_FAILURE);
+	}
+	if (!strcmp (argv[1], "?"))
+	{
+		i2c (get_input_source, -1);
+		exit (EXIT_SUCCESS);
 	}
 
 	unsigned long input_source = 0;
