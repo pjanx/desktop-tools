@@ -1,7 +1,7 @@
 /*
  * iexec.c: run a program and restart on file change
  *
- * Copyright (c) 2017, Přemysl Eric Janouch <p@janouch.name>
+ * Copyright (c) 2017 - 2023, Přemysl Eric Janouch <p@janouch.name>
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted.
@@ -29,21 +29,26 @@ static bool g_restarting = false;
 static int g_inotify_fd, g_inotify_wd;
 
 static void
+handle_inotify_event (const struct inotify_event *e, const char *base)
+{
+	if (e->wd != g_inotify_wd || strcmp (e->name, base))
+		return;
+
+	print_debug ("file changed, killing child");
+	g_restarting = true;
+	if (g_child >= 0 && kill (g_child, SIGINT))
+		print_error ("kill: %s", strerror (errno));
+}
+
+static void
 handle_file_change (const char *base)
 {
-	char buf[4096]; ssize_t len; const struct inotify_event *e;
+	char buf[4096];
+	ssize_t len = 0;
+	struct inotify_event *e = NULL;
 	while ((len = read (g_inotify_fd, buf, sizeof buf)) > 0)
-	for (char *ptr = buf; ptr < buf + len; ptr += sizeof *e + e->len)
-	{
-		e = (const struct inotify_event *) buf;
-		if (e->wd != g_inotify_wd || strcmp (e->name, base))
-			continue;
-
-		print_debug ("file changed, killing child");
-		g_restarting = true;
-		if (kill (g_child, SIGINT))
-			print_error ("kill: %s", strerror (errno));
-	}
+		for (char *ptr = buf; ptr < buf + len; ptr += sizeof *e + e->len)
+			handle_inotify_event ((e = (struct inotify_event *) buf), base);
 }
 
 static void
@@ -148,12 +153,13 @@ main (int argc, char *argv[])
 	if (sigprocmask (SIG_BLOCK, &chld, &orig))
 		exit_fatal ("sigprocmask: %s", strerror (errno));
 
-	char *path = xstrdup (argv[0]);
+	char *path = NULL;
+	char *dir = dirname ((path = xstrdup (argv[0])));
 
 	if ((g_inotify_fd = inotify_init1 (IN_NONBLOCK)) < 0)
 		exit_fatal ("inotify_init1: %s", strerror (errno));
 	if ((g_inotify_wd = inotify_add_watch (g_inotify_fd,
-		dirname (path), IN_MOVED_TO | IN_CLOSE_WRITE)) < 0)
+		dir, IN_MOVED_TO | IN_CLOSE_WRITE)) < 0)
 		exit_fatal ("inotify_add_watch: %s", strerror (errno));
 
 	free (path);
