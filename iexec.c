@@ -24,20 +24,35 @@
 // This can also work on BSD if someone puts in the effort to support kqueue
 #include <sys/inotify.h>
 
-static pid_t g_child;
-static bool g_restarting = false;
-static int g_inotify_fd, g_inotify_wd;
+static struct
+{
+	pid_t child;                        ///< Watched child or 0
+	bool exits;                         ///< Don't restart child when it exits
+	bool respawn;                       ///< Respawn child ASAP
+	bool killing;                       ///< Waiting for child to die
+	int inotify_fd, inotify_wd;
+}
+g;
 
+// Note that this program doesn't queue up file-based restarts
 static void
 handle_inotify_event (const struct inotify_event *e, const char *base)
 {
-	if (e->wd != g_inotify_wd || strcmp (e->name, base))
+	if (e->wd != g.inotify_wd || strcmp (e->name, base))
 		return;
 
-	print_debug ("file changed, killing child");
-	g_restarting = true;
-	if (g_child >= 0 && kill (g_child, SIGINT))
-		print_error ("kill: %s", strerror (errno));
+	if (g.child)
+	{
+		print_debug ("file changed, killing child");
+		if (kill (g.child, SIGINT))
+			print_error ("kill: %s", strerror (errno));
+		g.killing = true;
+	}
+	else
+	{
+		print_debug ("file changed, respawning");
+		g.respawn = true;
+	}
 }
 
 static void
@@ -46,7 +61,7 @@ handle_file_change (const char *base)
 	char buf[4096];
 	ssize_t len = 0;
 	struct inotify_event *e = NULL;
-	while ((len = read (g_inotify_fd, buf, sizeof buf)) > 0)
+	while ((len = read (g.inotify_fd, buf, sizeof buf)) > 0)
 		for (char *ptr = buf; ptr < buf + len; ptr += sizeof *e + e->len)
 			handle_inotify_event ((e = (struct inotify_event *) buf), base);
 }
@@ -54,9 +69,9 @@ handle_file_change (const char *base)
 static void
 spawn (char *argv[])
 {
-	if ((g_child = fork ()) == -1)
+	if ((g.child = fork ()) == -1)
 		exit_fatal ("fork: %s", strerror (errno));
-	else if (g_child)
+	else if (g.child)
 		return;
 
 	// A linker can create spurious CLOSE_WRITEs, wait until it's executable
@@ -69,23 +84,22 @@ spawn (char *argv[])
 }
 
 static bool
-check_child_death (char *argv[])
+check_child_death (void)
 {
-	if (waitpid (g_child, NULL, WNOHANG) != g_child)
+	int status = 0;
+	if (waitpid (g.child, &status, WNOHANG) != g.child)
 		return true;
 
-	if (!g_restarting)
+	g.child = 0;
+	if (!g.killing)
 	{
 		print_debug ("child died on its own, not respawning");
-		return false;
+		return g.exits;
 	}
-	else
-	{
-		print_debug ("child died on request, respawning");
-		spawn (argv);
-		g_restarting = false;
-		return true;
-	}
+
+	g.killing = false;
+	print_debug ("child died on request, respawning");
+	return g.respawn = true;
 }
 
 static void
@@ -102,6 +116,7 @@ main (int argc, char *argv[])
 	static const struct opt opts[] =
 	{
 		{ 'f', "file", "PATH", 0, "watch this path rather than the program" },
+		{ 'e', "exits", NULL, 0, "allow the program to exit on its own" },
 		{ 'd', "debug", NULL, 0, "run in debug mode" },
 		{ 'h', "help", NULL, 0, "display this help and exit" },
 		{ 'V', "version", NULL, 0, "output version information and exit" },
@@ -120,6 +135,9 @@ main (int argc, char *argv[])
 	{
 	case 'f':
 		target = optarg;
+		break;
+	case 'e':
+		g.exits = true;
 		break;
 	case 'd':
 		g_debug_mode = true;
@@ -164,25 +182,30 @@ main (int argc, char *argv[])
 	char *path = NULL;
 	char *dir = dirname ((path = xstrdup (target)));
 
-	if ((g_inotify_fd = inotify_init1 (IN_NONBLOCK)) < 0)
+	if ((g.inotify_fd = inotify_init1 (IN_NONBLOCK)) < 0)
 		exit_fatal ("inotify_init1: %s", strerror (errno));
-	if ((g_inotify_wd = inotify_add_watch (g_inotify_fd,
+	if ((g.inotify_wd = inotify_add_watch (g.inotify_fd,
 		dir, IN_MOVED_TO | IN_CLOSE_WRITE)) < 0)
 		exit_fatal ("inotify_add_watch: %s", strerror (errno));
 
 	free (path);
 	char *base = basename ((path = xstrdup (target)));
-	spawn (argv);
-
+	g.respawn = true;
 	do
 	{
-		fd_set r; FD_SET (g_inotify_fd, &r);
-		(void) pselect (g_inotify_fd + 1, &r, NULL, NULL, NULL, &orig);
+		if (g.respawn)
+		{
+			spawn (argv);
+			g.respawn = false;
+		}
+
+		fd_set r; FD_SET (g.inotify_fd, &r);
+		(void) pselect (g.inotify_fd + 1, &r, NULL, NULL, NULL, &orig);
 		handle_file_change (base);
 	}
-	while (check_child_death (argv));
+	while (check_child_death ());
 
 	free (path);
-	close (g_inotify_fd);
+	xclose (g.inotify_fd);
 	return EXIT_SUCCESS;
 }
