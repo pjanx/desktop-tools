@@ -98,8 +98,10 @@ sigchld_handler (int signum)
 int
 main (int argc, char *argv[])
 {
+	const char *target = NULL;
 	static const struct opt opts[] =
 	{
+		{ 'f', "file", "PATH", 0, "watch this path rather than the program" },
 		{ 'd', "debug", NULL, 0, "run in debug mode" },
 		{ 'h', "help", NULL, 0, "display this help and exit" },
 		{ 'V', "version", NULL, 0, "output version information and exit" },
@@ -116,6 +118,9 @@ main (int argc, char *argv[])
 	while ((c = opt_handler_get (&oh)) != -1)
 	switch (c)
 	{
+	case 'f':
+		target = optarg;
+		break;
 	case 'd':
 		g_debug_mode = true;
 		break;
@@ -141,6 +146,9 @@ main (int argc, char *argv[])
 	argc -= optind;
 	argv += optind;
 
+	if (!target)
+		target = argv[0];
+
 	(void) signal (SIGPIPE, SIG_IGN);
 	struct sigaction sa = { .sa_handler = sigchld_handler };
 	sigemptyset (&sa.sa_mask);
@@ -154,7 +162,7 @@ main (int argc, char *argv[])
 		exit_fatal ("sigprocmask: %s", strerror (errno));
 
 	char *path = NULL;
-	char *dir = dirname ((path = xstrdup (argv[0])));
+	char *dir = dirname ((path = xstrdup (target)));
 
 	if ((g_inotify_fd = inotify_init1 (IN_NONBLOCK)) < 0)
 		exit_fatal ("inotify_init1: %s", strerror (errno));
@@ -163,7 +171,7 @@ main (int argc, char *argv[])
 		exit_fatal ("inotify_add_watch: %s", strerror (errno));
 
 	free (path);
-	char *base = basename ((path = xstrdup (argv[0])));
+	char *base = basename ((path = xstrdup (target)));
 	spawn (argv);
 
 	do
