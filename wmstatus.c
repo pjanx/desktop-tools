@@ -20,7 +20,9 @@
 #define LIBERTY_WANT_ASYNC
 #define LIBERTY_WANT_PROTO_MPD
 
-#define _GNU_SOURCE // openat
+// openat, dirfd
+#define _XOPEN_SOURCE 700
+#define _GNU_SOURCE
 
 #include "config.h"
 #undef PROGRAM_NAME
