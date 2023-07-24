@@ -22,6 +22,7 @@
 
 // openat, dirfd
 #define _XOPEN_SOURCE 700
+#define _ATFILE_SOURCE
 #define _GNU_SOURCE
 
 #include "config.h"
