@@ -20,7 +20,8 @@ my %legends;
 sub retrieve_legends {
 	# HTTP/Tiny supports TLS, but with non-core IO::Socket::SSL, so use cURL
 	open(my $sock, '-|', 'curl', '-sSA', $agent,
-		"$base/weathericon/2.0/legends.txt") or return $!;
+		'https://raw.githubusercontent.com/' .
+		'metno/weathericons/main/weather/legend.csv') or return $!;
 	while (local $_ = <$sock>) { $legends{$1} = $2 if /^(.+?),(.+?),/ }
 	close($sock);
 }
