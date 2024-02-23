@@ -1,7 +1,7 @@
 /*
  * wmstatus.c: simple PulseAudio-enabled status setter for dwm and i3/sway
  *
- * Copyright (c) 2015 - 2021, Přemysl Eric Janouch <p@janouch.name>
+ * Copyright (c) 2015 - 2024, Přemysl Eric Janouch <p@janouch.name>
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted.
@@ -852,7 +852,7 @@ struct app_context
 	struct mpd_client mpd_client;       ///< MPD client
 
 	char *mpd_song;                     ///< MPD current song
-	char *mpd_status;                   ///< MPD status (overrides song)
+	bool mpd_stopped;                   ///< MPD stopped (overrides song)
 
 	// NUT:
 
@@ -992,7 +992,6 @@ app_context_free (struct app_context *self)
 
 	mpd_client_free (&self->mpd_client);
 	cstr_set (&self->mpd_song, NULL);
-	cstr_set (&self->mpd_status, NULL);
 
 	nut_client_free (&self->nut_client);
 	str_map_free (&self->nut_ups_info);
@@ -1240,7 +1239,7 @@ refresh_status (struct app_context *ctx)
 {
 	if (ctx->prefix)        ctx->backend->add (ctx->backend, ctx->prefix);
 
-	if (ctx->mpd_status)    ctx->backend->add (ctx->backend, ctx->mpd_status);
+	if (ctx->mpd_stopped)   ctx->backend->add (ctx->backend, "MPD stopped");
 	else if (ctx->mpd_song) ctx->backend->add (ctx->backend, ctx->mpd_song);
 
 	if (ctx->noise_end_time)
@@ -1507,9 +1506,8 @@ mpd_on_info_response (const struct mpd_response *response,
 	struct str_map map;
 	mpd_vector_to_map (data, &map);
 
-	cstr_set (&ctx->mpd_status, NULL);
-
 	struct str s = str_make ();
+	ctx->mpd_stopped = false;
 
 	const char *value;
 	if ((value = str_map_find (&map, "state")))
@@ -1517,7 +1515,7 @@ mpd_on_info_response (const struct mpd_response *response,
 		// Unicode approximates since in proportional fonts ASCII looks ugly
 		// and I don't want to depend on a particular font with player chars
 		if (!strcmp (value, "stop"))
-			ctx->mpd_status = xstrdup ("MPD stopped");
+			ctx->mpd_stopped = true;
 		else if (!strcmp (value, "pause"))
 			str_append (&s, "▯▯ " /* "|| " */);
 		else
@@ -1614,6 +1612,10 @@ mpd_on_failure (void *user_data)
 	struct app_context *ctx = user_data;
 	print_error ("connection to MPD failed");
 	mpd_queue_reconnect (ctx);
+
+	cstr_set (&ctx->mpd_song, NULL);
+	ctx->mpd_stopped = false;
+	refresh_status (ctx);
 }
 
 static void
@@ -2223,14 +2225,20 @@ spawn (char *argv[])
 		mpd_client_idle (c, 0);                            \
 	}
 
-// XXX: pause without argument is deprecated, we can watch play state
-//   if we want to have the toggle pause/play functionality
-MPD_SIMPLE (play,     "pause",    NULL)
+
+MPD_SIMPLE (play,     "play",     NULL)
+MPD_SIMPLE (toggle,   "pause",    NULL)
 MPD_SIMPLE (stop,     "stop",     NULL)
 MPD_SIMPLE (prev,     "previous", NULL)
 MPD_SIMPLE (next,     "next",     NULL)
 MPD_SIMPLE (forward,  "seekcur", "+10", NULL)
 MPD_SIMPLE (backward, "seekcur", "-10", NULL)
+
+static void
+on_mpd_play_toggle (struct app_context *ctx, int arg)
+{
+	(ctx->mpd_stopped ? on_mpd_play : on_mpd_toggle) (ctx, arg);
+}
 
 static void
 on_volume_finish (pa_context *context, int success, void *userdata)
@@ -2429,13 +2437,13 @@ g_keys[] =
 	// can be used to figure out which modifier is AltGr
 
 	// MPD
-	{ Mod4Mask,               XK_Up,        on_mpd_play,          0 },
+	{ Mod4Mask,               XK_Up,        on_mpd_play_toggle,   0 },
 	{ Mod4Mask,               XK_Down,      on_mpd_stop,          0 },
 	{ Mod4Mask,               XK_Left,      on_mpd_prev,          0 },
 	{ Mod4Mask,               XK_Right,     on_mpd_next,          0 },
 	{ Mod4Mask | ShiftMask,   XK_Left,      on_mpd_backward,      0 },
 	{ Mod4Mask | ShiftMask,   XK_Right,     on_mpd_forward,       0 },
-	{ 0, XF86XK_AudioPlay,                  on_mpd_play,          0 },
+	{ 0, XF86XK_AudioPlay,                  on_mpd_play_toggle,   0 },
 	{ 0, XF86XK_AudioPrev,                  on_mpd_prev,          0 },
 	{ 0, XF86XK_AudioNext,                  on_mpd_next,          0 },
 
