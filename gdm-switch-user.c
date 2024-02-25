@@ -1,5 +1,5 @@
 // Public domain
-#include <gdm-user-switching.h>
+#include <gdm/gdm-user-switching.h>
 
 int
 main (int argc, char *argv[])
