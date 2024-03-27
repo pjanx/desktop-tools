@@ -33,7 +33,7 @@ configure_file (${PROJECT_SOURCE_DIR}/config.h.in
 include_directories (${PROJECT_BINARY_DIR})
 
 # Build
-set (targets wmstatus paswitch siprandom big-brother)
+set (targets wmstatus paswitch siprandom)
 if ("${CMAKE_SYSTEM_NAME}" STREQUAL Linux)
 	# These use Linux i2c APIs, but can be made to work on macOS
 	list (APPEND targets brightness input-switch)
@@ -47,7 +47,7 @@ elseif (APPLE)
 	add_definitions (-D_DARWIN_C_SOURCE)
 endif ()
 
-foreach (name ${targets})
+foreach (name big-brother ${targets})
 	add_executable (${name} ${name}.c)
 endforeach ()
 
@@ -93,7 +93,20 @@ if (WITH_GDM)
 	install (TARGETS gdm-switch-user DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif ()
 
-list (REMOVE_ITEM targets big-brother)
+# These should be accessible by users, but need to touch system devices.
+# Use the setuid bit, for simplicity.
+foreach (target brightness input-switch)
+	if (${target} IN_LIST targets)
+		list (REMOVE_ITEM targets ${target})
+		install (TARGETS ${target} DESTINATION ${CMAKE_INSTALL_BINDIR}
+			PERMISSIONS
+				OWNER_WRITE OWNER_READ OWNER_EXECUTE
+				GROUP_READ GROUP_EXECUTE
+				WORLD_READ WORLD_EXECUTE
+				SETUID)
+	endif ()
+endforeach ()
+
 install (TARGETS ${targets} DESTINATION ${CMAKE_INSTALL_BINDIR})
 install (PROGRAMS shellify DESTINATION ${CMAKE_INSTALL_BINDIR})
 install (FILES LICENSE DESTINATION ${CMAKE_INSTALL_DOCDIR})
