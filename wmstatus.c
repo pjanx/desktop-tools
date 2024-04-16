@@ -2069,8 +2069,19 @@ on_noise_adjust (struct app_context *ctx, int arg)
 	if (!ctx->noise_end_time && (arg < 0 || !noise_start (ctx)))
 		return;
 
-	// The granularity of noise playback is whole minutes
-	ctx->noise_end_time += arg * 60;
+	time_t now = time (NULL);
+	int diff = difftime (ctx->noise_end_time, now);
+
+	// The granularity of noise playback setting is whole hours.
+	enum { SECOND = 1, MINUTE = 60, HOUR = 3600 };
+	if (arg > 0)
+		// Add a minute to enable stepping up from 0:59 to 2:00.
+		diff = (diff + arg * HOUR + MINUTE) / HOUR * HOUR;
+	else if (arg++ < 0)
+		// Remove a second to enable stepping down from 2:00 to 1:00.
+		diff = (diff + arg * HOUR - SECOND) / HOUR * HOUR;
+
+	ctx->noise_end_time = now + diff;
 	on_noise_timer (ctx);
 }
 
@@ -2492,8 +2503,8 @@ g_keys[] =
 	{ 0, XF86XK_AudioMicMute,               on_volume_mic_mute,   0 },
 
 	// Noise playback
-	{ ControlMask, XF86XK_AudioRaiseVolume, on_noise_adjust,     60 },
-	{ ControlMask, XF86XK_AudioLowerVolume, on_noise_adjust,    -60 },
+	{ ControlMask, XF86XK_AudioRaiseVolume, on_noise_adjust,      1 },
+	{ ControlMask, XF86XK_AudioLowerVolume, on_noise_adjust,     -1 },
 };
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
