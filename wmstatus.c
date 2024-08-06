@@ -782,30 +782,122 @@ backend_i3_new (void)
 
 // --- Configuration -----------------------------------------------------------
 
-static struct simple_config_item g_config_table[] =
+static struct config_schema g_config_general[] =
 {
-	{ "mpd_address",     "localhost",       "MPD host or socket"             },
-	{ "mpd_service",     "6600",            "MPD service name or port"       },
-	{ "mpd_password",    NULL,              "MPD password"                   },
+	{ .name      = "command",
+	  .comment   = "Command to run for more info",
+	  .type      = CONFIG_ITEM_STRING },
+	{ .name      = "sleep_timer",
+	  .comment   = "Idle seconds to suspend after",
+	  .type      = CONFIG_ITEM_INTEGER },
+	{}
+};
 
-	{ "nut_enabled",     "off",             "NUT UPS status reading enabled" },
-	{ "nut_load_thld",   "50",              "NUT threshold for load display" },
+static struct config_schema g_config_mpd[] =
+{
+	{ .name      = "address",
+	  .comment   = "MPD host or socket",
+	  .type      = CONFIG_ITEM_STRING,
+	  .default_  = "\"localhost\"" },
+	{ .name      = "service",
+	  .comment   = "MPD service name or port",
+	  .type      = CONFIG_ITEM_STRING,
+	  .default_  = "\"6600\"" },
+	{ .name      = "password",
+	  .comment   = "MPD password",
+	  .type      = CONFIG_ITEM_STRING },
+	{}
+};
+
+static struct config_schema g_config_nut[] =
+{
+	{ .name      = "enabled",
+	  .comment   = "NUT UPS status reading enabled",
+	  .type      = CONFIG_ITEM_BOOLEAN,
+	  .default_  = "off" },
+	{ .name      = "load_thld",
+	  .comment   = "NUT threshold for load display",
+	  .type      = CONFIG_ITEM_INTEGER,
+	  .default_  = "50" },
 
 	// This is just a hack because my UPS doesn't report that value; a more
 	// proper way of providing this information would be by making use of the
 	// enhanced configuration format and allowing arbitrary per-UPS overrides
-	{ "nut_load_power",  NULL,              "ups.realpower.nominal override" },
-
-	{ "command",         NULL,              "command to run for more info"   },
-	{ "sleep_timer",     NULL,              "idle seconds to suspend after"  },
-	{ NULL,              NULL,              NULL                             }
+	{ .name      = "load_power",
+	  .comment   = "ups.realpower.nominal fallback",
+	  .type      = CONFIG_ITEM_INTEGER },
+	{}
 };
+
+static void
+app_load_config_general (struct config_item *subtree, void *user_data)
+{
+	config_schema_apply_to_object (g_config_general, subtree, user_data);
+}
+
+static void
+app_load_config_mpd (struct config_item *subtree, void *user_data)
+{
+	config_schema_apply_to_object (g_config_mpd, subtree, user_data);
+}
+
+static void
+app_load_config_nut (struct config_item *subtree, void *user_data)
+{
+	config_schema_apply_to_object (g_config_nut, subtree, user_data);
+}
+
+static struct config
+app_make_config (void)
+{
+	struct config config = config_make ();
+	config_register_module (&config, "general", app_load_config_general, NULL);
+	config_register_module (&config, "mpd",     app_load_config_mpd,     NULL);
+	config_register_module (&config, "nut",     app_load_config_nut,     NULL);
+
+	// Bootstrap configuration, so that we can access schema items at all
+	config_load (&config, config_item_object ());
+	return config;
+}
+
+static const char *
+get_config_string (struct config_item *root, const char *key)
+{
+	struct config_item *item = config_item_get (root, key, NULL);
+	hard_assert (item);
+	if (item->type == CONFIG_ITEM_NULL)
+		return NULL;
+	hard_assert (config_item_type_is_string (item->type));
+	return item->value.string.str;
+}
+
+static const int64_t *
+get_config_integer (struct config_item *root, const char *key)
+{
+	struct config_item *item = config_item_get (root, key, NULL);
+	hard_assert (item);
+	if (item->type == CONFIG_ITEM_NULL)
+		return NULL;
+	hard_assert (item->type == CONFIG_ITEM_INTEGER);
+	return &item->value.integer;
+}
+
+static const bool *
+get_config_boolean (struct config_item *root, const char *key)
+{
+	struct config_item *item = config_item_get (root, key, NULL);
+	hard_assert (item);
+	if (item->type == CONFIG_ITEM_NULL)
+		return NULL;
+	hard_assert (item->type == CONFIG_ITEM_BOOLEAN);
+	return &item->value.boolean;
+}
 
 // --- Application -------------------------------------------------------------
 
 struct app_context
 {
-	struct str_map config;              ///< Program configuration
+	struct config config;               ///< Program configuration
 	struct backend *backend;            ///< WM backend
 
 	Display *dpy;                       ///< X display handle
@@ -923,8 +1015,7 @@ app_context_init (struct app_context *self)
 {
 	memset (self, 0, sizeof *self);
 
-	self->config = str_map_make (free);
-	simple_config_load_defaults (&self->config, g_config_table);
+	self->config = app_make_config ();
 
 	if (!(self->dpy = XkbOpenDisplay
 		(NULL, &self->xkb_base_event_code, NULL, NULL, NULL, NULL)))
@@ -966,8 +1057,8 @@ app_context_init (struct app_context *self)
 static void
 app_context_free (struct app_context *self)
 {
-	str_map_free (&self->config);
-	if (self->backend)	self->backend->destroy (self->backend);
+	config_free (&self->config);
+	if (self->backend)	     self->backend->destroy (self->backend);
 
 	poller_fd_reset (&self->x_event);
 	cstr_set (&self->layout, NULL);
@@ -1426,7 +1517,8 @@ static void
 on_command_start (void *user_data)
 {
 	struct app_context *ctx = user_data;
-	char *command = str_map_find (&ctx->config, "command");
+	const char *command =
+		get_config_string (ctx->config.root, "general.command");
 	if (!command)
 		return;
 
@@ -1446,7 +1538,7 @@ on_command_start (void *user_data)
 	posix_spawn_file_actions_addclose (&actions, output_pipe[PIPE_WRITE]);
 
 	pid_t pid = -1;
-	char *argv[] = { "sh", "-c", command, NULL };
+	char *argv[] = { "sh", "-c", (char *) command, NULL };
 	int result = posix_spawnp (&pid, argv[0], &actions, NULL, argv, environ);
 	posix_spawn_file_actions_destroy (&actions);
 
@@ -1595,7 +1687,7 @@ mpd_on_connected (void *user_data)
 	struct app_context *ctx = user_data;
 	struct mpd_client *c = &ctx->mpd_client;
 
-	const char *password = str_map_find (&ctx->config, "mpd_password");
+	const char *password = get_config_string (ctx->config.root, "mpd.password");
 	if (password)
 	{
 		mpd_client_send_command (c, "password", password, NULL);
@@ -1642,9 +1734,10 @@ on_mpd_reconnect (void *user_data)
 	c->on_io_hook   = mpd_on_io_hook;
 
 	struct error *e = NULL;
+	struct config_item *root = ctx->config.root;
 	if (!mpd_client_connect (&ctx->mpd_client,
-		str_map_find (&ctx->config, "mpd_address"),
-		str_map_find (&ctx->config, "mpd_service"), &e))
+		get_config_string (root, "mpd.address"),
+		get_config_string (root, "mpd.service"), &e))
 	{
 		print_error ("%s: %s", "cannot connect to MPD", e->message);
 		error_free (e);
@@ -1702,6 +1795,7 @@ nut_process_ups (struct app_context *ctx, struct strv *ups_list,
 	const char *charge  = str_map_find (dict, "battery.charge");
 	const char *runtime = str_map_find (dict, "battery.runtime");
 	const char *load    = str_map_find (dict, "ups.load");
+	const char *power   = str_map_find (dict, "ups.realpower.nominal");
 
 	if (!soft_assert (status && charge && runtime))
 		return;
@@ -1731,24 +1825,25 @@ nut_process_ups (struct app_context *ctx, struct strv *ups_list,
 		strv_append_owned (&items, interval_string (runtime_sec));
 
 	// Only show load if it's higher than the threshold so as to not distract
-	const char *threshold = str_map_find (&ctx->config, "nut_load_thld");
-	unsigned long load_n, threshold_n;
+	struct config_item *root = ctx->config.root;
+	const int64_t *threshold = get_config_integer (root, "nut.load_thld");
+	const int64_t *fallback  = get_config_integer (root, "nut.load_power");
+	unsigned long load_n, power_n;
 	if (load
-	 && xstrtoul (&load_n,      load,      10)
-	 && xstrtoul (&threshold_n, threshold, 10)
-	 && load_n >= threshold_n)
+	 && xstrtoul (&load_n, load, 10)
+	 && load_n >= (unsigned long) *threshold)
 	{
 		struct str item = str_make ();
 		str_append_printf (&item, "load %s%%", load);
 
-		const char *power = str_map_find (dict, "ups.realpower.nominal");
-		// Override if NUT cannot tell it correctly for whatever reason
-		if (!power) power = str_map_find (&ctx->config, "nut_load_power");
-
-		// Approximation of how much electricity the perpihery actually uses
-		unsigned long power_n;
+		// Approximation of how much electricity the perpihery actually uses.
+		// Use fallback if NUT cannot tell it correctly for whatever reason.
 		if (power && xstrtoul (&power_n, power, 10))
-			str_append_printf (&item, " (~%luW)", power_n * load_n / 100);
+			str_append_printf (&item,
+				" (~%luW)", power_n * load_n / 100);
+		else if (fallback && *fallback >= 0)
+			str_append_printf (&item,
+				" (~%luW)", (unsigned long) *fallback * load_n / 100);
 
 		strv_append_owned (&items, str_steal (&item));
 	}
@@ -1891,12 +1986,7 @@ static void
 on_nut_reconnect (void *user_data)
 {
 	struct app_context *ctx = user_data;
-
-	bool want_nut = false;
-	if (!set_boolean_if_valid (&want_nut,
-		str_map_find (&ctx->config, "nut_enabled")))
-		print_error ("invalid configuration value for `%s'", "nut_enabled");
-	if (!want_nut)
+	if (!*get_config_boolean (ctx->config.root, "nut.enabled"))
 		return;
 
 	struct nut_client *c = &ctx->nut_client;
@@ -2580,13 +2670,13 @@ on_x_ready (const struct pollfd *pfd, void *user_data)
 static void
 init_xlib_events (struct app_context *ctx)
 {
-	unsigned long n;
-	const char *sleep_timer = str_map_find (&ctx->config, "sleep_timer");
+	const int64_t *sleep_timer =
+		get_config_integer (ctx->config.root, "general.sleep_timer");
 	if (sleep_timer && ctx->idle_counter)
 	{
-		if (!xstrtoul (&n, sleep_timer, 10) || !n || n > INT_MAX / 1000)
+		if (*sleep_timer <= 0 || *sleep_timer > INT_MAX / 1000)
 			exit_fatal ("invalid value for the sleep timer");
-		XSyncIntToValue (&ctx->idle_timeout, n * 1000);
+		XSyncIntToValue (&ctx->idle_timeout, *sleep_timer * 1000);
 		set_idle_alarm (ctx, &ctx->idle_alarm_inactive,
 			XSyncPositiveComparison, ctx->idle_timeout);
 	}
@@ -2617,7 +2707,55 @@ init_xlib_events (struct app_context *ctx)
 		XkbAllStateComponentsMask, XkbGroupStateMask);
 }
 
-// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+// --- Configuration -----------------------------------------------------------
+
+static void
+app_load_configuration (struct app_context *ctx)
+{
+	char *filename = resolve_filename
+		(PROGRAM_NAME ".conf", resolve_relative_config_filename);
+	if (!filename)
+		return;
+
+	struct error *e = NULL;
+	struct config_item *root = config_read_from_file (filename, &e);
+	free (filename);
+
+	if (e)
+		exit_fatal ("error loading configuration: %s", e->message);
+
+	if (root)
+	{
+		config_load (&ctx->config, root);
+		config_schema_call_changed (ctx->config.root);
+	}
+}
+
+static void
+app_save_configuration (struct app_context *ctx, const char *path_hint)
+{
+	static const char *prolog =
+		"# " PROGRAM_NAME " " PROGRAM_VERSION " configuration file\n\n";
+
+	struct str data = str_make ();
+	str_append (&data, prolog);
+	config_item_write (ctx->config.root, true, &data);
+
+	struct error *e = NULL;
+	char *filename = write_configuration_file (path_hint, &data, &e);
+	str_free (&data);
+
+	if (!filename)
+	{
+		print_error ("%s", e->message);
+		error_free (e);
+		exit (EXIT_FAILURE);
+	}
+	print_status ("configuration written to `%s'", filename);
+	free (filename);
+}
+
+// --- Signals -----------------------------------------------------------------
 
 static int g_signal_pipe[2];            ///< A pipe used to signal... signals
 static struct poller_fd g_signal_event; ///< Signal pipe is readable
@@ -2681,6 +2819,8 @@ setup_signal_handlers (struct app_context *ctx)
 	poller_fd_set (&g_signal_event, POLLIN);
 }
 
+// --- Initialisation, event handling ------------------------------------------
+
 static void
 poller_timer_init_and_set (struct poller_timer *self, struct poller *poller,
 	poller_timer_fn cb, void *user_data)
@@ -2730,8 +2870,12 @@ main (int argc, char *argv[])
 		i3bar = true;
 		break;
 	case 'w':
-		call_simple_config_write_default (optarg, g_config_table);
+	{
+		// app_context_init() has side-effects.
+		struct app_context ctx = { .config = app_make_config () };
+		app_save_configuration (&ctx, optarg);
 		exit (EXIT_SUCCESS);
+	}
 	default:
 		print_error ("wrong options");
 		opt_handler_usage (&oh, stderr);
@@ -2746,11 +2890,9 @@ main (int argc, char *argv[])
 	struct app_context ctx;
 	app_context_init (&ctx);
 	ctx.prefix = argc > 1 ? argv[1] : NULL;
-	setup_signal_handlers (&ctx);
 
-	struct error *e = NULL;
-	if (!simple_config_update_from_file (&ctx.config, &e))
-		exit_fatal ("%s", e->message);
+	app_load_configuration (&ctx);
+	setup_signal_handlers (&ctx);
 
 	poller_timer_init_and_set (&ctx.time_changed, &ctx.poller,
 		on_time_changed, &ctx);
