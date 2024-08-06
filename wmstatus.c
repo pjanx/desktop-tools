@@ -852,6 +852,7 @@ app_make_config (void)
 {
 	struct config config = config_make ();
 	config_register_module (&config, "general", app_load_config_general, NULL);
+	config_register_module (&config, "keys",    NULL,                    NULL);
 	config_register_module (&config, "mpd",     app_load_config_mpd,     NULL);
 	config_register_module (&config, "nut",     app_load_config_nut,     NULL);
 
@@ -893,6 +894,65 @@ get_config_boolean (struct config_item *root, const char *key)
 	return &item->value.boolean;
 }
 
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+// This is essentially simplified shell command language syntax,
+// without comments or double quotes, and line feeds are whitespace.
+static bool
+parse_binding (const char *line, struct strv *out)
+{
+	enum { STA, DEF, ESC, WOR, QUO, STATES };
+	enum { TAKE = 1 << 3, PUSH = 1 << 4, STOP = 1 << 5, ERROR = 1 << 6 };
+	enum { TWOR = TAKE | WOR };
+
+	// We never transition back to the start state, so it can stay as a no-op
+	static char table[STATES][7] =
+	{
+		// state    NUL          SP, TAB, LF '     \     default
+		/* STA */ { STOP,        DEF,        QUO,  ESC,  TWOR },
+		/* DEF */ { STOP,        0,          QUO,  ESC,  TWOR },
+		/* ESC */ { ERROR,       TWOR,       TWOR, TWOR, TWOR },
+		/* WOR */ { STOP | PUSH, DEF | PUSH, QUO,  ESC,  TAKE },
+		/* QUO */ { ERROR,       TAKE,       WOR,  TAKE, TAKE },
+	};
+
+	strv_reset (out);
+	struct str token = str_make ();
+	int state = STA, edge = 0, ch = 0;
+	while (true)
+	{
+		switch ((ch = (unsigned char) *line++))
+		{
+		case 0:    edge = table[state][0]; break;
+		case '\t':
+		case '\n': edge = table[state][4]; break;
+		case ' ':  edge = table[state][1]; break;
+		case '\'': edge = table[state][2]; break;
+		case '\\': edge = table[state][3]; break;
+		default:   edge = table[state][4]; break;
+		}
+		if (edge & TAKE)
+			str_append_c (&token, ch);
+		if (edge & PUSH)
+		{
+			strv_append_owned (out, str_steal (&token));
+			token = str_make ();
+		}
+		if (edge & STOP)
+		{
+			str_free (&token);
+			return true;
+		}
+		if (edge & ERROR)
+		{
+			str_free (&token);
+			return false;
+		}
+		if (edge &= 7)
+			state = edge;
+	}
+}
+
 // --- Application -------------------------------------------------------------
 
 struct app_context
@@ -929,6 +989,7 @@ struct app_context
 
 	// Hotkeys:
 
+	struct binding *bindings;           ///< Global bindings
 	int xkb_base_event_code;            ///< Xkb base event code
 	char *layout;                       ///< Keyboard layout
 
@@ -2152,8 +2213,15 @@ on_noise_timer (void *user_data)
 }
 
 static void
-on_noise_adjust (struct app_context *ctx, int arg)
+action_noise_adjust (struct app_context *ctx, const struct strv *args)
 {
+	if (args->len != 1)
+	{
+		print_error ("usage: noise-adjust +/-HOURS");
+		return;
+	}
+
+	long arg = strtol (args->vector[0], NULL, 10);
 	ctx->noise_fadeout_samples = 0;
 	ctx->noise_fadeout_iterator = 0;
 	if (!ctx->noise_end_time && (arg < 0 || !noise_start (ctx)))
@@ -2313,32 +2381,34 @@ spawn (char *argv[])
 	posix_spawn_file_actions_destroy (&actions);
 }
 
-#define MPD_SIMPLE(name, ...)                              \
-	static void                                            \
-	on_mpd_ ## name (struct app_context *ctx, int arg)     \
-	{                                                      \
-		(void) arg;                                        \
-		struct mpd_client *c = &ctx->mpd_client;           \
-		if (c->state != MPD_CONNECTED)                     \
-			return;                                        \
-		mpd_client_send_command (c, __VA_ARGS__);          \
-		mpd_client_add_task (c, NULL, NULL);               \
-		mpd_client_idle (c, 0);                            \
-	}
-
-
-MPD_SIMPLE (play,     "play",     NULL)
-MPD_SIMPLE (toggle,   "pause",    NULL)
-MPD_SIMPLE (stop,     "stop",     NULL)
-MPD_SIMPLE (prev,     "previous", NULL)
-MPD_SIMPLE (next,     "next",     NULL)
-MPD_SIMPLE (forward,  "seekcur", "+10", NULL)
-MPD_SIMPLE (backward, "seekcur", "-10", NULL)
+static void
+action_exec (struct app_context *ctx, const struct strv *args)
+{
+	(void) ctx;
+	spawn (args->vector);
+}
 
 static void
-on_mpd_play_toggle (struct app_context *ctx, int arg)
+action_mpd (struct app_context *ctx, const struct strv *args)
 {
-	(ctx->mpd_stopped ? on_mpd_play : on_mpd_toggle) (ctx, arg);
+	struct mpd_client *c = &ctx->mpd_client;
+	if (c->state != MPD_CONNECTED)
+		return;
+	mpd_client_send_commandv (c, args->vector);
+	mpd_client_add_task (c, NULL, NULL);
+	mpd_client_idle (c, 0);
+}
+
+static void
+action_mpd_play_toggle (struct app_context *ctx, const struct strv *args)
+{
+	(void) args;
+	struct mpd_client *c = &ctx->mpd_client;
+	if (c->state != MPD_CONNECTED)
+		return;
+	mpd_client_send_command (c, ctx->mpd_stopped ? "play" : "pause", NULL);
+	mpd_client_add_task (c, NULL, NULL);
+	mpd_client_idle (c, 0);
 }
 
 static void
@@ -2352,9 +2422,9 @@ on_volume_finish (pa_context *context, int success, void *userdata)
 }
 
 static void
-on_volume_mic_mute (struct app_context *ctx, int arg)
+action_audio_mic_mute (struct app_context *ctx, const struct strv *args)
 {
-	(void) arg;
+	(void) args;
 
 	if (!ctx->context)
 		return;
@@ -2364,9 +2434,9 @@ on_volume_mic_mute (struct app_context *ctx, int arg)
 }
 
 static void
-on_volume_switch (struct app_context *ctx, int arg)
+action_audio_switch (struct app_context *ctx, const struct strv *args)
 {
-	(void) arg;
+	(void) args;
 
 	if (!ctx->context || !ctx->sink_port_active || !ctx->sink_ports.len)
 		return;
@@ -2383,9 +2453,9 @@ on_volume_switch (struct app_context *ctx, int arg)
 }
 
 static void
-on_volume_mute (struct app_context *ctx, int arg)
+action_audio_mute (struct app_context *ctx, const struct strv *args)
 {
-	(void) arg;
+	(void) args;
 
 	if (!ctx->context)
 		return;
@@ -2395,63 +2465,24 @@ on_volume_mute (struct app_context *ctx, int arg)
 }
 
 static void
-on_volume_set (struct app_context *ctx, int arg)
+action_audio_volume (struct app_context *ctx, const struct strv *args)
 {
+	if (args->len != 1)
+	{
+		print_error ("usage: audio-volume +/-PERCENT");
+		return;
+	}
 	if (!ctx->context)
 		return;
 
+	long arg = strtol (args->vector[0], NULL, 10);
 	pa_cvolume volume = ctx->sink_volume;
 	if (arg > 0)
-		pa_cvolume_inc (&volume, (pa_volume_t)  arg * PA_VOLUME_NORM / 100);
+		pa_cvolume_inc (&volume, (pa_volume_t) +arg * PA_VOLUME_NORM / 100);
 	else
 		pa_cvolume_dec (&volume, (pa_volume_t) -arg * PA_VOLUME_NORM / 100);
 	pa_operation_unref (pa_context_set_sink_volume_by_name (ctx->context,
 		DEFAULT_SINK, &volume, on_volume_finish, ctx));
-}
-
-static void
-on_lock (struct app_context *ctx, int arg)
-{
-	(void) ctx;
-	(void) arg;
-
-	// One of these will work
-	char *argv_gdm[] = { "gdm-switch-user", NULL };
-	spawn (argv_gdm);
-	char *argv_ldm[] = { "dm-tool", "lock", NULL };
-	spawn (argv_ldm);
-}
-
-static void
-on_input_switch (struct app_context *ctx, int arg)
-{
-	(void) ctx;
-
-	char *values[] = { "vga", "dvi", "hdmi", "dp" },
-		*numbers[] = { "1", "2" };
-	char *argv[] = { "input-switch",
-		values[arg & 0xf], numbers[arg >> 4], NULL };
-	spawn (argv);
-}
-
-static void
-on_brightness (struct app_context *ctx, int arg)
-{
-	(void) ctx;
-	char *value = xstrdup_printf ("%d", arg);
-	char *argv[] = { "brightness", value, NULL };
-	spawn (argv);
-	free (value);
-}
-
-static void
-on_standby (struct app_context *ctx, int arg)
-{
-	(void) ctx;
-	(void) arg;
-
-	// We need to wait a little while until user releases the key
-	spawn ((char *[]) { "sh", "-c", "sleep 1; xset dpms force standby", NULL });
 }
 
 static void
@@ -2499,9 +2530,9 @@ go_insomniac (struct app_context *ctx)
 }
 
 static void
-on_insomnia (struct app_context *ctx, int arg)
+action_insomnia (struct app_context *ctx, const struct strv *args)
 {
-	(void) arg;
+	(void) args;
 	cstr_set (&ctx->insomnia_info, NULL);
 
 	// Get rid of the lock if we hold one, establish it otherwise
@@ -2517,84 +2548,48 @@ on_insomnia (struct app_context *ctx, int arg)
 }
 
 static void
-on_lock_group (struct app_context *ctx, int arg)
+action_xkb_lock_group (struct app_context *ctx, const struct strv *args)
 {
-	XkbLockGroup (ctx->dpy, XkbUseCoreKbd, arg);
+	if (args->len != 1)
+	{
+		print_error ("usage: xkb-lock-group GROUP");
+		return;
+	}
+
+	long group = strtol (args->vector[0], NULL, 10) - 1;
+	if (group < XkbGroup1Index || group > XkbGroup4Index)
+		print_warning ("invalid XKB group index: %s", args->vector[0]);
+	else
+		XkbLockGroup (ctx->dpy, XkbUseCoreKbd, group);
 }
 
-struct
+static const struct action
 {
-	unsigned mod;
-	KeySym keysym;
-	void (*handler) (struct app_context *ctx, int arg);
-	int arg;
+	const char *name;
+	void (*handler) (struct app_context *ctx, const struct strv *args);
 }
-g_keys[] =
+g_handlers[] =
 {
-	// This key should be labeled L on normal Qwert[yz] layouts
-	{ Mod4Mask,             XK_n,         on_lock,              0 },
+	{ "exec",            action_exec            },
+	{ "mpd",             action_mpd             },
+	{ "mpd-play-toggle", action_mpd_play_toggle },
+	{ "xkb-lock-group",  action_xkb_lock_group  },
+	{ "insomnia",        action_insomnia        },
+	{ "audio-switch",    action_audio_switch    },
+	{ "audio-mute",      action_audio_mute      },
+	{ "audio-mic-mute",  action_audio_mic_mute  },
+	{ "audio-volume",    action_audio_volume    },
+	{ "noise-adjust",    action_noise_adjust    },
+};
 
-	// xmodmap | grep -e Alt_R -e Meta_R -e ISO_Level3_Shift -e Mode_switch
-	// can be used to figure out which modifier is AltGr
+struct binding
+{
+	LIST_HEADER (struct binding)
 
-	// MPD
-	{ Mod4Mask,               XK_Up,        on_mpd_play_toggle,   0 },
-	{ Mod4Mask,               XK_Down,      on_mpd_stop,          0 },
-	{ Mod4Mask,               XK_Left,      on_mpd_prev,          0 },
-	{ Mod4Mask,               XK_Right,     on_mpd_next,          0 },
-	{ Mod4Mask | ShiftMask,   XK_Left,      on_mpd_backward,      0 },
-	{ Mod4Mask | ShiftMask,   XK_Right,     on_mpd_forward,       0 },
-	{ 0, XF86XK_AudioPlay,                  on_mpd_play_toggle,   0 },
-	{ 0, XF86XK_AudioPrev,                  on_mpd_prev,          0 },
-	{ 0, XF86XK_AudioNext,                  on_mpd_next,          0 },
-
-	// Keyboard groups
-	{ Mod4Mask,               XK_F1,        on_lock_group,        0 },
-	{ Mod4Mask,               XK_F2,        on_lock_group,        1 },
-	{ Mod4Mask,               XK_F3,        on_lock_group,        2 },
-	{ Mod4Mask,               XK_F4,        on_lock_group,        3 },
-
-#define CSMask (ControlMask | ShiftMask)
-
-	// Display input sources
-	{ Mod4Mask | ControlMask, XK_F1,        on_input_switch,      0 },
-	{ Mod4Mask | CSMask,      XK_F1,        on_input_switch, 16 | 0 },
-	{ Mod4Mask | ControlMask, XK_F2,        on_input_switch,      1 },
-	{ Mod4Mask | CSMask,      XK_F2,        on_input_switch, 16 | 1 },
-	{ Mod4Mask | ControlMask, XK_F3,        on_input_switch,      2 },
-	{ Mod4Mask | CSMask,      XK_F3,        on_input_switch, 16 | 2 },
-	{ Mod4Mask | ControlMask, XK_F4,        on_input_switch,      3 },
-	{ Mod4Mask | CSMask,      XK_F4,        on_input_switch, 16 | 3 },
-
-	// Brightness
-	{ Mod4Mask,               XK_Home,      on_brightness,       10 },
-	{ Mod4Mask,               XK_End,       on_brightness,      -10 },
-	{ 0, XF86XK_MonBrightnessUp,            on_brightness,       10 },
-	{ 0, XF86XK_MonBrightnessDown,          on_brightness,      -10 },
-
-	{ Mod4Mask,               XK_F5,        on_standby,           0 },
-	{ Mod4Mask | ShiftMask,   XK_F5,        on_insomnia,          0 },
-	{ Mod4Mask,               XK_Pause,     on_standby,           0 },
-	{ Mod4Mask | ShiftMask,   XK_Pause,     on_insomnia,          0 },
-
-	// Volume
-	{ Mod4Mask,               XK_Insert,    on_volume_switch,     0 },
-	{ Mod4Mask,               XK_Delete,    on_volume_mute,       0 },
-	{ Mod4Mask | ShiftMask,   XK_Delete,    on_volume_mic_mute,   0 },
-	{ Mod4Mask,               XK_Page_Up,   on_volume_set,        5 },
-	{ Mod4Mask | ShiftMask,   XK_Page_Up,   on_volume_set,        1 },
-	{ Mod4Mask,               XK_Page_Down, on_volume_set,       -5 },
-	{ Mod4Mask | ShiftMask,   XK_Page_Down, on_volume_set,       -1 },
-	{ 0, XF86XK_AudioRaiseVolume,           on_volume_set,        5 },
-	{ ShiftMask, XF86XK_AudioRaiseVolume,   on_volume_set,        1 },
-	{ 0, XF86XK_AudioLowerVolume,           on_volume_set,       -5 },
-	{ ShiftMask, XF86XK_AudioLowerVolume,   on_volume_set,       -1 },
-	{ 0, XF86XK_AudioMute,                  on_volume_mute,       0 },
-	{ 0, XF86XK_AudioMicMute,               on_volume_mic_mute,   0 },
-
-	// Noise playback
-	{ ControlMask, XF86XK_AudioRaiseVolume, on_noise_adjust,      1 },
-	{ ControlMask, XF86XK_AudioLowerVolume, on_noise_adjust,     -1 },
+	unsigned mods;                      ///< Modifiers
+	KeyCode keycode;                    ///< Key code
+	struct action handler;              ///< Handling procedure
+	struct strv args;                   ///< Arguments to the handler
 };
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -2603,16 +2598,11 @@ static void
 on_x_keypress (struct app_context *ctx, XEvent *e)
 {
 	XKeyEvent *ev = &e->xkey;
-	unsigned unconsumed_mods;
-	KeySym keysym;
-	if (!XkbLookupKeySym (ctx->dpy,
-		(KeyCode) ev->keycode, ev->state, &unconsumed_mods, &keysym))
-		return;
-	for (size_t i = 0; i < N_ELEMENTS (g_keys); i++)
-		if (g_keys[i].keysym == keysym
-		 && g_keys[i].mod == ev->state
-		 && g_keys[i].handler)
-			g_keys[i].handler (ctx, g_keys[i].arg);
+	LIST_FOR_EACH (struct binding, iter, ctx->bindings)
+		if (iter->keycode == ev->keycode
+		 && iter->mods == ev->state
+		 && iter->handler.handler)
+			iter->handler.handler (ctx, &iter->args);
 }
 
 static void
@@ -2667,6 +2657,134 @@ on_x_ready (const struct pollfd *pfd, void *user_data)
 	}
 }
 
+static bool
+parse_key_modifier (const char *modifier, unsigned *mods)
+{
+	static const struct
+	{
+		const char *name;
+		unsigned mask;
+	}
+	modifiers[] =
+	{
+		{"Shift",   ShiftMask},
+		{"Lock",    LockMask},
+		{"Control", ControlMask},
+		{"Mod1",    Mod1Mask},
+		{"Mod2",    Mod2Mask},
+		{"Mod3",    Mod3Mask},
+		{"Mod4",    Mod4Mask},
+		{"Mod5",    Mod5Mask},
+	};
+
+	for (size_t k = 0; k < N_ELEMENTS (modifiers); k++)
+		if (!strcasecmp_ascii (modifiers[k].name, modifier))
+		{
+			*mods |= modifiers[k].mask;
+			return true;
+		}
+	return false;
+}
+
+static bool
+parse_key_vector (const struct strv *keys, unsigned *mods, KeySym *keysym)
+{
+	for (size_t i = 0; i < keys->len; i++)
+	{
+		if (parse_key_modifier (keys->vector[i], mods))
+			continue;
+		if (*keysym)
+			return false;
+		*keysym = XStringToKeysym (keys->vector[i]);
+	}
+	return *keysym != 0;
+}
+
+static bool
+parse_key_combination (const char *combination, unsigned *mods, KeySym *keysym)
+{
+	struct strv keys = strv_make ();
+	bool result = parse_binding (combination, &keys)
+		&& parse_key_vector (&keys, mods, keysym);
+	strv_free (&keys);
+	return result;
+}
+
+static const char *
+init_grab (struct app_context *ctx, const char *combination, const char *action)
+{
+	unsigned mods = 0;
+	KeySym keysym = 0;
+	if (!parse_key_combination (combination, &mods, &keysym))
+		return "parsing key combination failed";
+
+	KeyCode keycode = XKeysymToKeycode (ctx->dpy, keysym);
+	if (!keycode)
+		return "no keycode found";
+
+	struct strv args = strv_make ();
+	if (!parse_binding (action, &args) || !args.len)
+	{
+		strv_free (&args);
+		return "parsing the binding failed";
+	}
+
+	struct action handler = {};
+	for (size_t i = 0; i < N_ELEMENTS (g_handlers); i++)
+		if (!strcmp (g_handlers[i].name, args.vector[0]))
+		{
+			handler = g_handlers[i];
+			break;
+		}
+	free (strv_steal (&args, 0));
+	if (!handler.name)
+	{
+		strv_free (&args);
+		return "unknown action";
+	}
+
+	XGrabKey (ctx->dpy, keycode, mods, DefaultRootWindow (ctx->dpy),
+		 False /* ? */, GrabModeAsync, GrabModeAsync);
+
+	struct binding *binding = xcalloc (1, sizeof *binding);
+	binding->mods = mods;
+	binding->keycode = keycode;
+	binding->handler = handler;
+	binding->args = args;
+	LIST_PREPEND (ctx->bindings, binding);
+	return NULL;
+}
+
+static void
+init_bindings (struct app_context *ctx)
+{
+	unsigned ignored_locks =
+		LockMask | XkbKeysymToModifiers (ctx->dpy, XK_Num_Lock);
+	hard_assert (XkbSetIgnoreLockMods
+		(ctx->dpy, XkbUseCoreKbd, ignored_locks, ignored_locks, 0, 0));
+
+	struct str_map *keys =
+		&config_item_get (ctx->config.root, "keys", NULL)->value.object;
+	struct str_map_iter iter = str_map_iter_make (keys);
+
+	struct config_item *action;
+	while ((action = str_map_iter_next (&iter)))
+	{
+		const char *combination = iter.link->key, *err = NULL;
+		if (action->type != CONFIG_ITEM_NULL)
+		{
+			if (action->type != CONFIG_ITEM_STRING)
+				err = "expected a string";
+			else
+				err = init_grab (ctx, combination, action->value.string.str);
+		}
+		if (err)
+			print_warning ("configuration: key `%s': %s", combination, err);
+	}
+
+	XSelectInput (ctx->dpy, DefaultRootWindow (ctx->dpy), KeyPressMask);
+}
+
 static void
 init_xlib_events (struct app_context *ctx)
 {
@@ -2681,19 +2799,7 @@ init_xlib_events (struct app_context *ctx)
 			XSyncPositiveComparison, ctx->idle_timeout);
 	}
 
-	unsigned ignored_locks =
-		LockMask | XkbKeysymToModifiers (ctx->dpy, XK_Num_Lock);
-	hard_assert (XkbSetIgnoreLockMods
-		(ctx->dpy, XkbUseCoreKbd, ignored_locks, ignored_locks, 0, 0));
-
-	KeyCode code;
-	Window root = DefaultRootWindow (ctx->dpy);
-	for (size_t i = 0; i < N_ELEMENTS (g_keys); i++)
-		if ((code = XKeysymToKeycode (ctx->dpy, g_keys[i].keysym)))
-			XGrabKey (ctx->dpy, code, g_keys[i].mod, root,
-				 False /* ? */, GrabModeAsync, GrabModeAsync);
-
-	XSelectInput (ctx->dpy, root, KeyPressMask);
+	init_bindings (ctx);
 	XSync (ctx->dpy, False);
 
 	ctx->x_event.dispatcher = on_x_ready;

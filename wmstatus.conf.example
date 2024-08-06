@@ -1,0 +1,60 @@
+# vim: set ft=libertyconf:
+keys = {
+	# This key should be labeled L on normal Qwert[yz] layouts
+	"Mod4 n"                       = "exec dm-tool lock" # gdm-switch-user
+
+	# xmodmap grep -e Alt_R -e Meta_R -e ISO_Level3_Shift -e Mode_switch
+	# can be used to figure out which modifier is AltGr
+
+	"Mod4       Up"                = "mpd-play-toggle"
+	"Mod4       Down"              = "mpd stop"
+	"Mod4       Left"              = "mpd previous"
+	"Mod4       Right"             = "mpd next"
+	"Mod4 Shift Left"              = "mpd seekcur -10"
+	"Mod4 Shift Right"             = "mpd seekcur +10"
+	"XF86AudioPlay"                = "mpd-play-toggle"
+	"XF86AudioPrev"                = "mpd previous"
+	"XF86AudioNext"                = "mpd next"
+
+	"Mod4 F1"                      = "xkb-lock-group 1"
+	"Mod4 F2"                      = "xkb-lock-group 2"
+	"Mod4 F3"                      = "xkb-lock-group 3"
+	"Mod4 F4"                      = "xkb-lock-group 4"
+
+	"Mod4 Control       F1"        = "exec input-switch vga 1"
+	"Mod4 Control Shift F1"        = "exec input-switch vga 2"
+	"Mod4 Control       F2"        = "exec input-switch dvi 1"
+	"Mod4 Control Shift F2"        = "exec input-switch dvi 2"
+	"Mod4 Control       F3"        = "exec input-switch hdmi 1"
+	"Mod4 Control Shift F3"        = "exec input-switch hdmi 2"
+	"Mod4 Control       F4"        = "exec input-switch dp 1"
+	"Mod4 Control Shift F4"        = "exec input-switch dp 2"
+
+	"Mod4 Home"                    = "exec brightness +10"
+	"Mod4 End"                     = "exec brightness -10"
+	"XF86MonBrightnessUp"          = "exec brightness +10"
+	"XF86MonBrightnessDown"        = "exec brightness -10"
+
+	# We need to wait a little while until user releases the key
+	"Mod4       F5"    = "exec sh -c 'sleep 1; xset dpms force standby'"
+	"Mod4 Shift F5"    = "insomnia"
+	"Mod4       Pause" = "exec sh -c 'sleep 1; xset dpms force standby'"
+	"Mod4 Shift Pause" = "insomnia"
+
+	"Mod4       Insert"            = "audio-switch"
+	"Mod4       Delete"            = "audio-mute"
+	"Mod4 Shift Delete"            = "audio-mic-mute"
+	"Mod4       Page_Up"           = "audio-volume +5"
+	"Mod4 Shift Page_Up"           = "audio-volume +1"
+	"Mod4       Page_Down"         = "audio-volume -5"
+	"Mod4 Shift Page_Down"         = "audio-volume -1"
+	"        XF86AudioRaiseVolume" = "audio-volume +5"
+	"Shift   XF86AudioRaiseVolume" = "audio-volume +1"
+	"        XF86AudioLowerVolume" = "audio-volume -5"
+	"Shift   XF86AudioLowerVolume" = "audio-volume -1"
+	"        XF86AudioMute"        = "audio-mute"
+	"        XF86AudioMicMute"     = "audio-mic-mute"
+
+	"Control XF86AudioRaiseVolume" = "noise-adjust +1"
+	"Control XF86AudioLowerVolume" = "noise-adjust -1"
+}
