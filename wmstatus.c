@@ -962,12 +962,16 @@ struct app_context
 
 	Display *dpy;                       ///< X display handle
 	struct poller_fd x_event;           ///< X11 event
-	const char *prefix;                 ///< User-defined prefix
 
 	struct poller poller;               ///< Poller
 	struct poller_timer time_changed;   ///< Time change timer
 	struct poller_timer make_context;   ///< Start PulseAudio communication
 	struct poller_timer refresh_rest;   ///< Refresh unpollable information
+
+	// IPC:
+
+	int ipc_fd;                         ///< The IPC datagram socket (file)
+	struct poller_fd ipc_event;         ///< IPC event
 
 	// Sleep timer:
 
@@ -1085,10 +1089,13 @@ app_context_init (struct app_context *self)
 	poller_init (&self->poller);
 	self->api = poller_pa_new (&self->poller);
 
+	self->ipc_fd = -1;
+	self->ipc_event = poller_fd_make (&self->poller, self->ipc_fd);
+
 	self->command_current = strv_make ();
 	self->command_pid = -1;
 	self->command_fd = -1;
-	self->command_event = poller_fd_make (&self->poller, -1);
+	self->command_event = poller_fd_make (&self->poller, self->command_fd);
 	self->command_buffer = str_make ();
 
 	set_cloexec (ConnectionNumber (self->dpy));
@@ -1127,6 +1134,12 @@ app_context_free (struct app_context *self)
 	if (self->noise_stream)  pa_stream_unref (self->noise_stream);
 	if (self->context)       pa_context_unref (self->context);
 	if (self->dpy)           XCloseDisplay (self->dpy);
+
+	if (self->ipc_fd != -1)
+	{
+		poller_fd_reset (&self->ipc_event);
+		xclose (self->ipc_fd);
+	}
 
 	strv_free (&self->command_current);
 	if (self->command_pid != -1)
@@ -1389,8 +1402,6 @@ make_noise_status (struct app_context *ctx)
 static void
 refresh_status (struct app_context *ctx)
 {
-	if (ctx->prefix)        ctx->backend->add (ctx->backend, ctx->prefix);
-
 	if (ctx->mpd_stopped)   ctx->backend->add (ctx->backend, "MPD stopped");
 	else if (ctx->mpd_song) ctx->backend->add (ctx->backend, ctx->mpd_song);
 
@@ -2592,6 +2603,15 @@ struct binding
 	struct strv args;                   ///< Arguments to the handler
 };
 
+static struct action
+action_by_name (const char *name)
+{
+	for (size_t i = 0; i < N_ELEMENTS (g_handlers); i++)
+		if (!strcmp (g_handlers[i].name, name))
+			return g_handlers[i];
+	return (struct action) {};
+}
+
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
 static void
@@ -2729,13 +2749,7 @@ init_grab (struct app_context *ctx, const char *combination, const char *action)
 		return "parsing the binding failed";
 	}
 
-	struct action handler = {};
-	for (size_t i = 0; i < N_ELEMENTS (g_handlers); i++)
-		if (!strcmp (g_handlers[i].name, args.vector[0]))
-		{
-			handler = g_handlers[i];
-			break;
-		}
+	struct action handler = action_by_name (args.vector[0]);
 	free (strv_steal (&args, 0));
 	if (!handler.name)
 	{
@@ -2811,6 +2825,123 @@ init_xlib_events (struct app_context *ctx)
 		XkbAllNamesMask, XkbGroupNamesMask);
 	XkbSelectEventDetails (ctx->dpy, XkbUseCoreKbd, XkbStateNotify,
 		XkbAllStateComponentsMask, XkbGroupStateMask);
+}
+
+// --- IPC ---------------------------------------------------------------------
+
+#define IPC_SOCKET "ipc.socket"
+
+static void
+on_ipc_message (struct app_context *ctx, const char *message, size_t len)
+{
+	struct action handler = action_by_name (message);
+	if (!handler.handler)
+	{
+		print_error ("ipc: %s: %s", "unknown action", message);
+		return;
+	}
+
+	struct strv args = strv_make ();
+	const char *p = memchr (message, 0, len);
+	while (p)
+	{
+		strv_append (&args, ++p);
+		p = memchr (p, 0, len - (p - message));
+	}
+
+	handler.handler (ctx, &args);
+	strv_free (&args);
+}
+
+static void
+on_ipc_ready (const struct pollfd *pfd, void *user_data)
+{
+	struct app_context *ctx = user_data;
+	char buf[65536] = {};
+
+	while (true)
+	{
+		ssize_t len = read (pfd->fd, buf, sizeof buf - 1 /* NUL-terminated */);
+		if (len >= 0)
+		{
+			buf[len] = 0;
+			on_ipc_message (ctx, buf, len);
+		}
+		else if (errno == EAGAIN)
+			return;
+		else if (errno != EINTR)
+			print_warning ("ipc: %s: %s", "read", strerror (errno));
+
+	}
+}
+
+static void
+app_setup_ipc (struct app_context *ctx)
+{
+	int fd = socket (AF_UNIX, SOCK_DGRAM, 0);
+	if (fd == -1)
+	{
+		print_error ("ipc: %s: %s", "socket", strerror (errno));
+		return;
+	}
+
+	set_cloexec (fd);
+	char *path = resolve_relative_runtime_filename (IPC_SOCKET);
+
+	// This is unfortunately the only way to prevent EADDRINUSE.
+	unlink (path);
+
+	struct sockaddr_un sa = { .sun_family = AF_UNIX };
+	strncpy (sa.sun_path, path, sizeof sa.sun_path - 1);
+	if (bind (fd, (struct sockaddr *) &sa, sizeof sa))
+	{
+		print_error ("ipc: %s: %s", path, strerror (errno));
+		xclose (fd);
+		goto out;
+	}
+
+	set_blocking (fd, false);
+	ctx->ipc_fd = fd;
+	ctx->ipc_event = poller_fd_make (&ctx->poller, fd);
+	ctx->ipc_event.dispatcher = on_ipc_ready;
+	ctx->ipc_event.user_data = ctx;
+	poller_fd_set (&ctx->ipc_event, POLLIN);
+out:
+	free (path);
+}
+
+static int
+ipc_send (int argc, char *argv[])
+{
+	int fd = socket (AF_UNIX, SOCK_DGRAM, 0);
+	if (fd == -1)
+		print_fatal ("ipc: %s: %s", "socket", strerror (errno));
+
+	struct str message = str_make ();
+	for (int i = 0; i < argc; i++)
+	{
+		if (i > 0)
+			str_append_c (&message, 0);
+		str_append (&message, argv[i]);
+	}
+
+	char *path = resolve_relative_runtime_filename (IPC_SOCKET);
+	struct sockaddr_un sa = { .sun_family = AF_UNIX };
+	strncpy (sa.sun_path, path, sizeof sa.sun_path - 1);
+
+	int result = EXIT_FAILURE;
+	ssize_t sent = sendto (fd, message.str, message.len, 0,
+		(struct sockaddr *) &sa, sizeof sa);
+	if (sent < 0)
+		print_error ("ipc: %s: %s", path, strerror (errno));
+	else if (sent != (ssize_t) message.len)
+		print_error ("ipc: %s: %s", path, "incomplete message sent");
+	else
+		result = 0;
+
+	free (path);
+	str_free (&message);
+	return result;
 }
 
 // --- Configuration -----------------------------------------------------------
@@ -2992,12 +3123,13 @@ main (int argc, char *argv[])
 	argv += optind;
 
 	opt_handler_free (&oh);
+	if (argc > 0)
+		return ipc_send (argc, argv);
 
 	struct app_context ctx;
 	app_context_init (&ctx);
-	ctx.prefix = argc > 1 ? argv[1] : NULL;
-
 	app_load_configuration (&ctx);
+	app_setup_ipc (&ctx);
 	setup_signal_handlers (&ctx);
 
 	poller_timer_init_and_set (&ctx.time_changed, &ctx.poller,
