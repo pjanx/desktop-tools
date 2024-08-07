@@ -939,7 +939,7 @@ parse_binding (const char *line, struct strv *out)
 		{
 		case 0:    edge = table[state][0]; break;
 		case '\t':
-		case '\n': edge = table[state][4]; break;
+		case '\n':
 		case ' ':  edge = table[state][1]; break;
 		case '\'': edge = table[state][2]; break;
 		case '\\': edge = table[state][3]; break;
