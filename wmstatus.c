@@ -70,6 +70,20 @@ log_message_custom (void *user_data, const char *quote, const char *fmt,
 	fputs ("\n", stream);
 }
 
+static void
+shell_quote (const char *str, struct str *output)
+{
+	// See SUSv3 Shell and Utilities, 2.2.3 Double-Quotes
+	str_append_c (output, '"');
+	for (const char *p = str; *p; p++)
+	{
+		if (strchr ("`$\"\\", *p))
+			str_append_c (output, '\\');
+		str_append_c (output, *p);
+	}
+	str_append_c (output, '"');
+}
+
 // --- NUT ---------------------------------------------------------------------
 
 // More or less copied and pasted from the MPD client.  This code doesn't even
@@ -2992,6 +3006,136 @@ app_save_configuration (struct app_context *ctx, const char *path_hint)
 	free (filename);
 }
 
+// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+static bool
+sway_command_argument_needs_quoting (const char *word)
+{
+	while (*word)
+		if (!isalnum_ascii (*word++))
+			return true;
+	return false;
+}
+
+static void
+sway_append_command_argument (struct str *out, const char *word)
+{
+	if (out->len)
+		str_append_c (out, ' ');
+
+	if (!sway_command_argument_needs_quoting (word))
+	{
+		str_append (out, word);
+		return;
+	}
+
+	str_append_c (out, '\'');
+	for (const char *p = word; *p; p++)
+	{
+		if (*p == '\'' || *p == '\\')
+			str_append_c (out, '\\');
+		str_append_c (out, *p);
+	}
+	str_append_c (out, '\'');
+}
+
+static const char *
+sway_bindsym (const char *combination, const char *action)
+{
+	const char *error = NULL;
+	struct strv keys = strv_make ();
+	struct strv args = strv_make ();
+	if (!parse_binding (combination, &keys))
+	{
+		error = "parsing key combination failed";
+		goto out;
+	}
+	if (!parse_binding (action, &args) || !args.len)
+	{
+		error = "parsing the binding failed";
+		goto out;
+	}
+
+	struct action handler = action_by_name (args.vector[0]);
+	if (!handler.name)
+	{
+		error = "unknown action";
+		goto out;
+	}
+
+	// The i3/Sway quoting is properly fucked up,
+	// and its exec command forwards to `sh -c`.
+	struct str shell_command = str_make ();
+	if (strcmp (handler.name, "exec"))
+	{
+		// argv[0] would need realpath() applied on it.
+		shell_quote (PROGRAM_NAME, &shell_command);
+		str_append (&shell_command, " -- ");
+		shell_quote (handler.name, &shell_command);
+		str_append_c (&shell_command, ' ');
+	}
+	for (size_t i = 1; i < args.len; i++)
+	{
+		shell_quote (args.vector[i], &shell_command);
+		str_append_c (&shell_command, ' ');
+	}
+	if (shell_command.len)
+		shell_command.str[--shell_command.len] = 0;
+
+	// This command name may not be quoted.
+	// Note that i3-msg doesn't accept bindsym at all, only swaymsg does.
+	struct str sway_command = str_make ();
+	sway_append_command_argument (&sway_command, "bindsym");
+	char *recombined = strv_join (&keys, "+");
+	sway_append_command_argument (&sway_command, recombined);
+	free (recombined);
+	sway_append_command_argument (&sway_command, "exec");
+	sway_append_command_argument (&sway_command, shell_command.str);
+	str_free (&shell_command);
+
+	struct strv argv = strv_make ();
+	strv_append (&argv, "swaymsg");
+	strv_append_owned (&argv, str_steal (&sway_command));
+
+	posix_spawn_file_actions_t actions;
+	posix_spawn_file_actions_init (&actions);
+	posix_spawnp (NULL, argv.vector[0], &actions, NULL, argv.vector, environ);
+	posix_spawn_file_actions_destroy (&actions);
+
+	strv_free (&argv);
+out:
+	strv_free (&keys);
+	strv_free (&args);
+	return error;
+}
+
+static void
+sway_forward_bindings (void)
+{
+	// app_context_init() has side-effects.
+	struct app_context ctx = { .config = app_make_config () };
+	app_load_configuration (&ctx);
+
+	struct str_map *keys =
+		&config_item_get (ctx.config.root, "keys", NULL)->value.object;
+	struct str_map_iter iter = str_map_iter_make (keys);
+
+	struct config_item *action;
+	while ((action = str_map_iter_next (&iter)))
+	{
+		const char *combination = iter.link->key, *err = NULL;
+		if (action->type != CONFIG_ITEM_NULL)
+		{
+			if (action->type != CONFIG_ITEM_STRING)
+				err = "expected a string";
+			else
+				err = sway_bindsym (combination, action->value.string.str);
+		}
+		if (err)
+			print_warning ("configuration: key `%s': %s", combination, err);
+	}
+}
+
 // --- Signals -----------------------------------------------------------------
 
 static int g_signal_pipe[2];            ///< A pipe used to signal... signals
@@ -3079,15 +3223,16 @@ main (int argc, char *argv[])
 		{ 'd', "debug", NULL, 0, "run in debug mode" },
 		{ 'h', "help", NULL, 0, "display this help and exit" },
 		{ 'V', "version", NULL, 0, "output version information and exit" },
-		{ '3', "i3bar", NULL, 0, "print output for i3bar/sway-bar instead" },
+		{ '3', "i3bar", NULL, 0, "print output for i3-bar/swaybar instead" },
+		{ 's', "bind-sway", NULL, 0, "import bindings over swaymsg" },
 		{ 'w', "write-default-cfg", "FILENAME",
 		  OPT_OPTIONAL_ARG | OPT_LONG_ONLY,
 		  "write a default configuration file and exit" },
 		{ 0, NULL, NULL, 0, NULL }
 	};
 
-	struct opt_handler oh =
-		opt_handler_make (argc, argv, opts, NULL, "Set root window name.");
+	struct opt_handler oh = opt_handler_make (argc, argv, opts, "[ACTION...]",
+		"Set root window name.");
 	bool i3bar = false;
 
 	int c;
@@ -3106,6 +3251,9 @@ main (int argc, char *argv[])
 	case '3':
 		i3bar = true;
 		break;
+	case 's':
+		sway_forward_bindings ();
+		exit (EXIT_SUCCESS);
 	case 'w':
 	{
 		// app_context_init() has side-effects.
