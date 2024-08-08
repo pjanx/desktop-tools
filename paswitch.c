@@ -290,7 +290,7 @@ on_sink_info (pa_context *context, const pa_sink_info *info, int eol,
 			sink->ports_len++;
 
 		struct port *port = sink->ports =
-			xcalloc (sizeof *sink->ports, sink->ports_len);
+			xcalloc (sink->ports_len, sizeof *sink->ports);
 		for (struct pa_sink_port_info **iter = info->ports; *iter; iter++)
 		{
 			port->name = xstrdup ((*iter)->name);

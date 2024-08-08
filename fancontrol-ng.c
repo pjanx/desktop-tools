@@ -124,7 +124,7 @@ config_validate_nonnegative (const struct config_item *item, struct error **e)
 	return error_set (e, "must be non-negative");
 }
 
-static struct config_schema g_config_device[] =
+static const struct config_schema g_config_device[] =
 {
 	{ .name      = "name",
 	  .comment   = "Device identifier",
@@ -137,7 +137,7 @@ static struct config_schema g_config_device[] =
 	{}
 };
 
-static struct config_schema g_config_pwm[] =
+static const struct config_schema g_config_pwm[] =
 {
 	{ .name      = "temp",
 	  .comment   = "Path to temperature sensor output",
@@ -415,7 +415,7 @@ device_create (struct app_context *ctx, const char *path,
 // There is no room for errors in the configuration, everything must be valid.
 // Thus the reset to defaults on invalid values is effectively disabled here.
 static bool
-apply_schema (struct config_schema *schema, struct config_item *object,
+apply_schema (const struct config_schema *schema, struct config_item *object,
 	struct error **e)
 {
 	struct error *warning = NULL, *error = NULL;
@@ -445,7 +445,7 @@ static bool
 check_device_configuration (struct config_item *subtree, struct error **e)
 {
 	// Check regular fields in the device object
-	for (struct config_schema *s = g_config_device; s->name; s++)
+	for (const struct config_schema *s = g_config_device; s->name; s++)
 		if (!apply_schema (s, subtree, e))
 			return false;
 
@@ -465,7 +465,7 @@ check_device_configuration (struct config_item *subtree, struct error **e)
 	while ((pwm = str_map_iter_next (&iter)))
 	{
 		const char *subpath = iter.link->key;
-		for (struct config_schema *s = g_config_pwm; s->name; s++)
+		for (const struct config_schema *s = g_config_pwm; s->name; s++)
 			if (!apply_schema (s, pwm, &error))
 			{
 				error_set (e, "PWM `%s': %s", subpath, error->message);
