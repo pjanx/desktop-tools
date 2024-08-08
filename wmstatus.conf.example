@@ -16,10 +16,10 @@ keys = {
 	"XF86AudioPrev"                = "mpd previous"
 	"XF86AudioNext"                = "mpd next"
 
-	"Mod4 F1"                      = "xkb-lock-group 1"
-	"Mod4 F2"                      = "xkb-lock-group 2"
-	"Mod4 F3"                      = "xkb-lock-group 3"
-	"Mod4 F4"                      = "xkb-lock-group 4"
+	"Mod4 F1"                      = "xkb-lock-group 0"
+	"Mod4 F2"                      = "xkb-lock-group 1"
+	"Mod4 F3"                      = "xkb-lock-group 2"
+	"Mod4 F4"                      = "xkb-lock-group 3"
 
 	"Mod4 Control       F1"        = "exec input-switch vga 1"
 	"Mod4 Control Shift F1"        = "exec input-switch vga 2"

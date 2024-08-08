@@ -2581,7 +2581,7 @@ action_xkb_lock_group (struct app_context *ctx, const struct strv *args)
 		return;
 	}
 
-	long group = strtol (args->vector[0], NULL, 10) - 1;
+	long group = strtol (args->vector[0], NULL, 10);
 	if (group < XkbGroup1Index || group > XkbGroup4Index)
 		print_warning ("invalid XKB group index: %s", args->vector[0]);
 	else
@@ -3039,6 +3039,30 @@ sway_append_command_argument (struct str *out, const char *word)
 	str_append_c (out, '\'');
 }
 
+static char *
+sway_shell_command_for_action (const struct strv *args)
+{
+	// The i3/Sway quoting is properly fucked up,
+	// and its exec command forwards to `sh -c`.
+	struct str shell_command = str_make ();
+	if (strcmp (args->vector[0], "exec"))
+	{
+		// argv[0] would need realpath() applied on it.
+		shell_quote (PROGRAM_NAME, &shell_command);
+		str_append (&shell_command, " -- ");
+		shell_quote (args->vector[0], &shell_command);
+		str_append_c (&shell_command, ' ');
+	}
+	for (size_t i = 1; i < args->len; i++)
+	{
+		shell_quote (args->vector[i], &shell_command);
+		str_append_c (&shell_command, ' ');
+	}
+	if (shell_command.len)
+		shell_command.str[--shell_command.len] = 0;
+	return str_steal (&shell_command);
+}
+
 static const char *
 sway_bindsym (const char *combination, const char *action)
 {
@@ -3063,25 +3087,6 @@ sway_bindsym (const char *combination, const char *action)
 		goto out;
 	}
 
-	// The i3/Sway quoting is properly fucked up,
-	// and its exec command forwards to `sh -c`.
-	struct str shell_command = str_make ();
-	if (strcmp (handler.name, "exec"))
-	{
-		// argv[0] would need realpath() applied on it.
-		shell_quote (PROGRAM_NAME, &shell_command);
-		str_append (&shell_command, " -- ");
-		shell_quote (handler.name, &shell_command);
-		str_append_c (&shell_command, ' ');
-	}
-	for (size_t i = 1; i < args.len; i++)
-	{
-		shell_quote (args.vector[i], &shell_command);
-		str_append_c (&shell_command, ' ');
-	}
-	if (shell_command.len)
-		shell_command.str[--shell_command.len] = 0;
-
 	// This command name may not be quoted.
 	// Note that i3-msg doesn't accept bindsym at all, only swaymsg does.
 	struct str sway_command = str_make ();
@@ -3089,9 +3094,24 @@ sway_bindsym (const char *combination, const char *action)
 	char *recombined = strv_join (&keys, "+");
 	sway_append_command_argument (&sway_command, recombined);
 	free (recombined);
-	sway_append_command_argument (&sway_command, "exec");
-	sway_append_command_argument (&sway_command, shell_command.str);
-	str_free (&shell_command);
+
+	if (handler.handler == action_xkb_lock_group)
+	{
+		// This should also switch the XWayland layout,
+		// though it has been observed to not take effect immediately.
+		sway_append_command_argument (&sway_command, "input");
+		sway_append_command_argument (&sway_command, "type:keyboard");
+		sway_append_command_argument (&sway_command, "xkb_switch_layout");
+		for (size_t i = 1; i < args.len; i++)
+			sway_append_command_argument (&sway_command, args.vector[i]);
+	}
+	else
+	{
+		sway_append_command_argument (&sway_command, "exec");
+		char *shell_command = sway_shell_command_for_action (&args);
+		sway_append_command_argument (&sway_command, shell_command);
+		free (shell_command);
+	}
 
 	struct strv argv = strv_make ();
 	strv_append (&argv, "swaymsg");
