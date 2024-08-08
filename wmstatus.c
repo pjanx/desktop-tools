@@ -796,7 +796,7 @@ backend_i3_new (void)
 
 // --- Configuration -----------------------------------------------------------
 
-static struct config_schema g_config_general[] =
+static const struct config_schema g_config_general[] =
 {
 	{ .name      = "command",
 	  .comment   = "Command to run for more info",
@@ -807,7 +807,7 @@ static struct config_schema g_config_general[] =
 	{}
 };
 
-static struct config_schema g_config_mpd[] =
+static const struct config_schema g_config_mpd[] =
 {
 	{ .name      = "address",
 	  .comment   = "MPD host or socket",
@@ -823,7 +823,7 @@ static struct config_schema g_config_mpd[] =
 	{}
 };
 
-static struct config_schema g_config_nut[] =
+static const struct config_schema g_config_nut[] =
 {
 	{ .name      = "enabled",
 	  .comment   = "NUT UPS status reading enabled",
