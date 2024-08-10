@@ -2701,14 +2701,14 @@ parse_key_modifier (const char *modifier, unsigned *mods)
 	}
 	modifiers[] =
 	{
-		{"Shift",   ShiftMask},
-		{"Lock",    LockMask},
-		{"Control", ControlMask},
-		{"Mod1",    Mod1Mask},
-		{"Mod2",    Mod2Mask},
-		{"Mod3",    Mod3Mask},
-		{"Mod4",    Mod4Mask},
-		{"Mod5",    Mod5Mask},
+		{ "Shift",   ShiftMask },
+		{ "Lock",    LockMask },
+		{ "Control", ControlMask },
+		{ "Mod1",    Mod1Mask },
+		{ "Mod2",    Mod2Mask },
+		{ "Mod3",    Mod3Mask },
+		{ "Mod4",    Mod4Mask },
+		{ "Mod5",    Mod5Mask },
 	};
 
 	for (size_t k = 0; k < N_ELEMENTS (modifiers); k++)
