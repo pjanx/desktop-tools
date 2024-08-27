@@ -46,7 +46,7 @@ log_message_custom (void *user_data, const char *quote, const char *fmt,
 static void
 wait_ms (long ms)
 {
-	struct timespec ts = { 0, ms * 1000 * 1000 };
+	struct timespec ts = { ms / 1000, (ms % 1000) * 1000 * 1000 };
 	nanosleep (&ts, NULL);
 }
 

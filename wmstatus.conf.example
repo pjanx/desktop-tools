@@ -57,4 +57,7 @@ keys = {
 
 	"Control XF86AudioRaiseVolume" = "noise-adjust +1"
 	"Control XF86AudioLowerVolume" = "noise-adjust -1"
+
+	# Turns on or off Pioneer integrated amplifiers
+	"Mod4 Control Delete" = "exec elksmart-comm --nec A538"
 }
