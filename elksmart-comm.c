@@ -1,5 +1,5 @@
 /*
- * elksmart-comm.c: ELK Smart infrared dongle tool (for the 4th generation)
+ * elksmart-comm.c: ELK Smart infrared dongle tool (for EKX4S and EKX5S-T)
  *
  * Copyright (c) 2024, Přemysl Eric Janouch <p@janouch.name>
  *
@@ -207,7 +207,8 @@ compress_value (unsigned value, struct str *encoded)
 static void
 compress_pulses (const struct pulse *pulses, size_t len, struct str *encoded)
 {
-	unsigned counts[len] = {};
+	unsigned counts[len];
+	memset (counts, 0, sizeof counts);
 	for (size_t i = 0; i < len; i++)
 		for (size_t k = 0; k < len; k++)
 			if (pulse_equal (pulses[i], pulses[k]))
@@ -222,7 +223,7 @@ compress_pulses (const struct pulse *pulses, size_t len, struct str *encoded)
 		if (counts[i] < counts[top1]
 		 && counts[i] > counts[top2])
 			p2 = pulses[top2 = i];
-		 else if (counts[top2] == counts[top1])
+		else if (counts[top2] == counts[top1])
 			p2 = pulses[top2 = i];
 
 	// Although I haven't really tried it, something tells me that
@@ -259,8 +260,9 @@ enum
 
 	// 0x134 (EKX5S ~ 5s, 5th generation remote)
 	// 0x195 (EKX4S ~ 4s, 4th generation remote)
-	// 0x184 (international edition)
-	USB_PRODUCT_SMTCTL_SMART = 0x0195,
+	// 0x184 (EKX5S-T, international edition)
+	USB_PRODUCT_SMTCTL_SMART_EKX4S = 0x0195,
+	USB_PRODUCT_SMTCTL_SMART_EKX5S_T = 0x0184,
 
 	// There should only ever be one interface.
 	USB_INTERFACE = 0,
@@ -551,7 +553,7 @@ send_identify (libusb_device_handle *device, struct error **e)
 		return error_set (e, "device busy or not supported");
 
 #if 0
-	// My device does not respond to this request.
+	// The EKX4S does not respond to this request.
 	static uint8_t c_serial[] = { -5, -5, -5, -5 };
 	if ((result = libusb_bulk_transfer (device, g.endpoint_out,
 		c_serial, sizeof c_serial, &len, 100)))
@@ -667,8 +669,14 @@ main (int argc, char *argv[])
 	if (result)
 		exit_fatal ("libusb: %s", libusb_strerror (result));
 
-	libusb_device_handle *device =
-		find_device (USB_VENDOR_SMTCTL, USB_PRODUCT_SMTCTL_SMART, &result);
+	libusb_device_handle *device = NULL;
+	if (!device && !result)
+		device = find_device (USB_VENDOR_SMTCTL,
+			USB_PRODUCT_SMTCTL_SMART_EKX4S, &result);
+	if (!device && !result)
+		device = find_device (USB_VENDOR_SMTCTL,
+			USB_PRODUCT_SMTCTL_SMART_EKX5S_T, &result);
+
 	if (result)
 		exit_fatal ("couldn't open device: %s", libusb_strerror (result));
 	else if (!device)
