@@ -2249,7 +2249,7 @@ action_noise_adjust (struct app_context *ctx, const struct strv *args)
 	long arg = strtol (args->vector[0], NULL, 10);
 	ctx->noise_fadeout_samples = 0;
 	ctx->noise_fadeout_iterator = 0;
-	if (!ctx->noise_end_time && (arg < 0 || !noise_start (ctx)))
+	if (!ctx->noise_end_time && (arg <= 0 || !noise_start (ctx)))
 		return;
 
 	time_t now = time (NULL);
