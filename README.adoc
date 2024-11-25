@@ -27,8 +27,6 @@ to other people as well:
    pseudo-random data; it should be fast enough to saturate most devices
  - 'big-brother' tracks the title of the active window and the idle state of
    the user and writes these events to standard output.
- - 'elksmart-comm' interfaces with ELK Smart infrared dongles,
-   partially reimplementing the Ocrustar mobile app.
 
 Few of them are useful outside of Linux.
 
@@ -40,8 +38,7 @@ Building
 --------
 Build dependencies: CMake, pkg-config, liberty (included) +
 Runtime dependencies: libpulse, libx11, dbus-1 +
-Optional runtime dependencies:
-libusb-1.0 (elksmart-comm), libgdm (gdm-switch-user)
+Optional runtime dependencies: libgdm (gdm-switch-user)
 
  $ git clone --recursive https://git.janouch.name/p/desktop-tools.git
  $ mkdir desktop-tools/build

@@ -19,14 +19,12 @@ find_package (PkgConfig REQUIRED)
 pkg_check_modules (x REQUIRED x11 xext xextproto)
 pkg_check_modules (pulse REQUIRED libpulse)
 pkg_check_modules (dbus REQUIRED dbus-1)
-pkg_check_modules (libusb libusb-1.0)
 pkg_check_modules (gdm gdm glib-2.0 gio-2.0)
 include_directories (
 	${x_INCLUDE_DIRS} ${pulse_INCLUDE_DIRS} ${dbus_INCLUDE_DIRS})
 link_directories (
 	${x_LIBRARY_DIRS} ${pulse_LIBRARY_DIRS} ${dbus_LIBRARY_DIRS})
 
-option (WITH_USB "Compile with USB utilities" ${libusb_FOUND})
 option (WITH_GDM "Compile with GDM utilities" ${gdm_FOUND})
 
 # Generate a configuration file
@@ -59,13 +57,6 @@ target_link_libraries (wmstatus
 	${x_LIBRARIES} ${pulse_LIBRARIES} ${dbus_LIBRARIES})
 add_threads (wmstatus)
 
-if (WITH_USB)
-	list (APPEND targets elksmart-comm)
-	add_executable (elksmart-comm elksmart-comm.c)
-	target_include_directories (elksmart-comm PUBLIC ${libusb_INCLUDE_DIRS})
-	target_link_directories (elksmart-comm PUBLIC ${libusb_LIBRARY_DIRS})
-	target_link_libraries (elksmart-comm ${libusb_LIBRARIES})
-endif ()
 if (WITH_GDM)
 	list (APPEND targets gdm-switch-user)
 	add_executable (gdm-switch-user gdm-switch-user.c)
@@ -105,7 +96,7 @@ endif ()
 
 # These should be accessible by users, but need to touch system devices.
 # Use the setuid bit, for simplicity.
-foreach (target brightness input-switch elksmart-comm)
+foreach (target brightness input-switch)
 	if (${target} IN_LIST targets)
 		list (REMOVE_ITEM targets ${target})
 		install (TARGETS ${target} DESTINATION ${CMAKE_INSTALL_BINDIR}
