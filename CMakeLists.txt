@@ -96,6 +96,7 @@ endif ()
 
 # These should be accessible by users, but need to touch system devices.
 # Use the setuid bit, for simplicity.
+set (SETUID "SETUID" CACHE STRING "Set this empty on permission issues")
 foreach (target brightness input-switch)
 	if (${target} IN_LIST targets)
 		list (REMOVE_ITEM targets ${target})
@@ -104,7 +105,7 @@ foreach (target brightness input-switch)
 				OWNER_WRITE OWNER_READ OWNER_EXECUTE
 				GROUP_READ GROUP_EXECUTE
 				WORLD_READ WORLD_EXECUTE
-				SETUID)
+				${SETUID})
 	endif ()
 endforeach ()
 
