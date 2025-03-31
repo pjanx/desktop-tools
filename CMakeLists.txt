@@ -33,7 +33,7 @@ configure_file (${PROJECT_SOURCE_DIR}/config.h.in
 include_directories (${PROJECT_BINARY_DIR})
 
 # Build
-set (targets wmstatus paswitch siprandom)
+set (targets wmstatus paswitch siprandom genpass)
 if ("${CMAKE_SYSTEM_NAME}" STREQUAL Linux)
 	# These use Linux i2c APIs, but can be made to work on macOS
 	list (APPEND targets brightness input-switch)
