@@ -809,10 +809,10 @@ static const struct config_schema g_config_general[] =
 
 static const struct config_schema g_config_mpd[] =
 {
+	// XXX: We might want to allow config item defaults to not disable nulls.
 	{ .name      = "address",
 	  .comment   = "MPD host or socket",
-	  .type      = CONFIG_ITEM_STRING,
-	  .default_  = "\"localhost\"" },
+	  .type      = CONFIG_ITEM_STRING },
 	{ .name      = "service",
 	  .comment   = "MPD service name or port",
 	  .type      = CONFIG_ITEM_STRING,
@@ -1809,8 +1809,12 @@ mpd_on_io_hook (void *user_data, bool outgoing, const char *line)
 static void
 on_mpd_reconnect (void *user_data)
 {
-	// FIXME: the user should be able to disable MPD
 	struct app_context *ctx = user_data;
+	struct config_item *root = ctx->config.root;
+	const char *address = get_config_string (root, "mpd.address");
+	const char *service = get_config_string (root, "mpd.service");
+	if (!address)
+		return;
 
 	struct mpd_client *c = &ctx->mpd_client;
 	c->user_data    = ctx;
@@ -1820,10 +1824,7 @@ on_mpd_reconnect (void *user_data)
 	c->on_io_hook   = mpd_on_io_hook;
 
 	struct error *e = NULL;
-	struct config_item *root = ctx->config.root;
-	if (!mpd_client_connect (&ctx->mpd_client,
-		get_config_string (root, "mpd.address"),
-		get_config_string (root, "mpd.service"), &e))
+	if (!mpd_client_connect (&ctx->mpd_client, address, service, &e))
 	{
 		print_error ("%s: %s", "cannot connect to MPD", e->message);
 		error_free (e);
