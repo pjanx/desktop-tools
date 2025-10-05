@@ -1,0 +1,18 @@
+LIUST-50
+========
+
+Included here are a simulator for the Toshiba Tec LIUST-A00 (LIUST-50)
+VFD line display, and a status program sending data to the device.
+
+For device documentation, see https://github.com/boricha/M202MD12D which is
+seemingly a project for the later LIUST-A10.
+
+Device setup
+------------
+ # stty -F /dev/ttyS0 9600 parenb oddp -crtscts -cstopb cs8
+
+Running
+-------
+ # liustatus > /dev/ttyS0
+
+ $ liustatus | liustsim
