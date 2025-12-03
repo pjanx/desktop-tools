@@ -799,7 +799,7 @@ backend_i3_new (void)
 static const struct config_schema g_config_general[] =
 {
 	{ .name      = "time_format",
-	  .comment   = "strftime ",
+	  .comment   = "strftime format specification string",
 	  .type      = CONFIG_ITEM_STRING,
 	  .default_  = "\"Week %V, %a %d %b %Y %H:%M %Z\"" },
 	{ .name      = "command",
