@@ -1,7 +1,7 @@
 /*
  * wmstatus.c: simple PulseAudio-enabled status setter for dwm and i3/sway
  *
- * Copyright (c) 2015 - 2024, Přemysl Eric Janouch <p@janouch.name>
+ * Copyright (c) 2015 - 2025, Přemysl Eric Janouch <p@janouch.name>
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted.
@@ -798,6 +798,10 @@ backend_i3_new (void)
 
 static const struct config_schema g_config_general[] =
 {
+	{ .name      = "time_format",
+	  .comment   = "strftime ",
+	  .type      = CONFIG_ITEM_STRING,
+	  .default_  = "\"Week %V, %a %d %b %Y %H:%M %Z\"" },
 	{ .name      = "command",
 	  .comment   = "Command to run for more info",
 	  .type      = CONFIG_ITEM_STRING },
@@ -1375,7 +1379,7 @@ make_time_status (const char *fmt)
 
 	if (local == NULL)
 		exit_fatal ("%s: %s", "localtime", strerror (errno));
-	if (!strftime (buf, sizeof buf, fmt, local))
+	if (*fmt && !strftime (buf, sizeof buf, fmt, local))
 		exit_fatal ("strftime == 0");
 
 	return xstrdup (buf);
@@ -1447,8 +1451,10 @@ refresh_status (struct app_context *ctx)
 	for (size_t i = 0; i < ctx->command_current.len; i++)
 		ctx->backend->add (ctx->backend, ctx->command_current.vector[i]);
 
-	char *times = make_time_status ("Week %V, %a %d %b %Y %H:%M %Z");
-	ctx->backend->add (ctx->backend, times);
+	char *times = make_time_status
+		(get_config_string (ctx->config.root, "general.time_format"));
+	if (*times)
+		ctx->backend->add (ctx->backend, times);
 	free (times);
 
 	ctx->backend->flush (ctx->backend);
