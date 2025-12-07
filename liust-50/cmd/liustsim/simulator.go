@@ -73,9 +73,9 @@ func (d *Display) drawCharacter(
 			var c color.RGBA
 			if r, _, _, _ := character.At(
 				bounds.Min.X+dx, bounds.Min.Y+dy).RGBA(); r >= 0x8000 {
-				c = color.RGBA{0x00, 0xFF, 0xC0, 0xFF}
+				c = color.RGBA{0x00, 0xFF, 0xB0, 0xFF}
 			} else {
-				c = color.RGBA{0x20, 0x20, 0x20, 0xFF}
+				c = color.RGBA{0x18, 0x18, 0x18, 0xFF}
 			}
 			img.SetRGBA(1+cx*charWidth+dx, 1+cy*charHeight+dy, c)
 		}
