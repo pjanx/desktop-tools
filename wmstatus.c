@@ -1265,6 +1265,8 @@ read_battery_status (int dir, char **type)
 	int charge = read_battery_charge (dir);
 	if (charge >= 0 && charge <= 100)
 		str_append_printf (&s, "%u%%", charge);
+	else
+		str_append_printf (&s, "—");
 
 	char *status = NULL;
 	char *model_name = read_value (dir, "model_name", NULL);
