@@ -2823,7 +2823,7 @@ init_bindings (struct app_context *ctx)
 }
 
 static void
-init_xlib_events (struct app_context *ctx)
+init_xlib_events (struct app_context *ctx, bool bind)
 {
 	const int64_t *sleep_timer =
 		get_config_integer (ctx->config.root, "general.sleep_timer");
@@ -2836,7 +2836,9 @@ init_xlib_events (struct app_context *ctx)
 			XSyncPositiveComparison, ctx->idle_timeout);
 	}
 
-	init_bindings (ctx);
+	if (bind)
+		init_bindings (ctx);
+
 	XSync (ctx->dpy, False);
 
 	ctx->x_event.dispatcher = on_x_ready;
@@ -3253,6 +3255,7 @@ main (int argc, char *argv[])
 		{ 'h', "help", NULL, 0, "display this help and exit" },
 		{ 'V', "version", NULL, 0, "output version information and exit" },
 		{ '3', "i3bar", NULL, 0, "print output for i3-bar/swaybar instead" },
+		{ 'n', "no-bind", NULL, 0, "do not bind keys" },
 		{ 's', "bind-sway", NULL, 0, "import bindings over swaymsg" },
 		{ 'w', "write-default-cfg", "FILENAME",
 		  OPT_OPTIONAL_ARG | OPT_LONG_ONLY,
@@ -3262,7 +3265,7 @@ main (int argc, char *argv[])
 
 	struct opt_handler oh = opt_handler_make (argc, argv, opts, "[ACTION...]",
 		"Set root window name.");
-	bool i3bar = false;
+	bool bind = true, i3bar = false;
 
 	int c;
 	while ((c = opt_handler_get (&oh)) != -1)
@@ -3277,6 +3280,9 @@ main (int argc, char *argv[])
 	case 'V':
 		printf (PROGRAM_NAME " " PROGRAM_VERSION "\n");
 		exit (EXIT_SUCCESS);
+	case 'n':
+		bind = false;
+		break;
 	case '3':
 		i3bar = true;
 		break;
@@ -3324,7 +3330,7 @@ main (int argc, char *argv[])
 	poller_timer_init_and_set (&ctx.noise_timer, &ctx.poller,
 		on_noise_timer, &ctx);
 
-	init_xlib_events (&ctx);
+	init_xlib_events (&ctx, bind);
 
 	if (i3bar)
 		ctx.backend = backend_i3_new ();
