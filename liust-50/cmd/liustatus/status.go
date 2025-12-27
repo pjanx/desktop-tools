@@ -98,7 +98,7 @@ func statusProducer(lines chan<- string) {
 		}
 
 		now := time.Now()
-		status := fmt.Sprintf("%s %3s %s",
+		status := fmt.Sprintf("%s%4s %s",
 			now.Format("Mon _2 Jan"), temperature, now.Format("15:04"))
 
 		// Ensure exactly 20 characters.
