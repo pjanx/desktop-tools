@@ -847,6 +847,23 @@ static const struct config_schema g_config_nut[] =
 	{}
 };
 
+static const struct config_schema g_config_upscat[] =
+{
+	{ .name      = "enabled",
+	  .comment   = "upscat UPS status reading enabled",
+	  .type      = CONFIG_ITEM_BOOLEAN,
+	  .default_  = "off" },
+	{ .name      = "command",
+	  .comment   = "upscat invocation",
+	  .type      = CONFIG_ITEM_STRING,
+	  .default_  = "\"upscat\"" },
+	{ .name      = "load_thld",
+	  .comment   = "upscat threshold for load display",
+	  .type      = CONFIG_ITEM_INTEGER,
+	  .default_  = "50" },
+	{}
+};
+
 static void
 app_load_config_general (struct config_item *subtree, void *user_data)
 {
@@ -865,6 +882,12 @@ app_load_config_nut (struct config_item *subtree, void *user_data)
 	config_schema_apply_to_object (g_config_nut, subtree, user_data);
 }
 
+static void
+app_load_config_upscat (struct config_item *subtree, void *user_data)
+{
+	config_schema_apply_to_object (g_config_upscat, subtree, user_data);
+}
+
 static struct config
 app_make_config (void)
 {
@@ -873,6 +896,7 @@ app_make_config (void)
 	config_register_module (&config, "keys",    NULL,                    NULL);
 	config_register_module (&config, "mpd",     app_load_config_mpd,     NULL);
 	config_register_module (&config, "nut",     app_load_config_nut,     NULL);
+	config_register_module (&config, "upscat",  app_load_config_upscat,  NULL);
 
 	// Bootstrap configuration, so that we can access schema items at all
 	config_load (&config, config_item_object ());
@@ -1038,6 +1062,17 @@ struct app_context
 
 	char *nut_status;                   ///< NUT status
 
+	// upscat:
+
+	struct poller_timer upscat_start;   ///< Start the upscat command
+	pid_t upscat_pid;                   ///< PID of the upscat process
+	int upscat_fd;                      ///< I/O socket
+	struct str_map upscat_columns;      ///< CSV column name to 1-based index
+	struct str upscat_buffer;           ///< Unprocessed input
+	struct poller_fd upscat_event;      ///< I/O event
+
+	char *upscat_status;                ///< upscat status
+
 	// PulseAudio:
 
 	pa_mainloop_api *api;               ///< PulseAudio event loop proxy
@@ -1137,6 +1172,12 @@ app_context_init (struct app_context *self)
 	nut_client_init (&self->nut_client, &self->poller);
 	self->nut_ups_info = str_map_make (str_map_destroy);
 
+	self->upscat_pid = -1;
+	self->upscat_fd = -1;
+	self->upscat_columns = str_map_make (NULL);
+	self->upscat_buffer = str_make ();
+	self->upscat_event = poller_fd_make (&self->poller, self->upscat_fd);
+
 	self->sink_ports = strv_make ();
 }
 
@@ -1179,6 +1220,17 @@ app_context_free (struct app_context *self)
 	nut_client_free (&self->nut_client);
 	str_map_free (&self->nut_ups_info);
 	cstr_set (&self->nut_status, NULL);
+
+	if (self->upscat_pid != -1)
+		(void) kill (self->upscat_pid, SIGTERM);
+	if (self->upscat_fd != -1)
+	{
+		poller_fd_reset (&self->upscat_event);
+		xclose (self->upscat_fd);
+	}
+	str_map_free (&self->upscat_columns);
+	str_free (&self->upscat_buffer);
+	cstr_set (&self->upscat_status, NULL);
 
 	strv_free (&self->sink_ports);
 	cstr_set (&self->sink_port_active, NULL);
@@ -1441,12 +1493,16 @@ refresh_status (struct app_context *ctx)
 	}
 
 	char *battery = make_battery_status ();
-	if (battery)            ctx->backend->add (ctx->backend, battery);
+	if (battery)
+		ctx->backend->add (ctx->backend, battery);
 	free (battery);
 
-	if (ctx->nut_status)    ctx->backend->add (ctx->backend, ctx->nut_status);
-	if (ctx->layout)        ctx->backend->add (ctx->backend, ctx->layout);
-
+	if (ctx->nut_status)
+		ctx->backend->add (ctx->backend, ctx->nut_status);
+	if (ctx->upscat_status)
+		ctx->backend->add (ctx->backend, ctx->upscat_status);
+	if (ctx->layout)
+		ctx->backend->add (ctx->backend, ctx->layout);
 	if (ctx->insomnia_info)
 		ctx->backend->add (ctx->backend, ctx->insomnia_info);
 
@@ -1555,7 +1611,7 @@ on_x_alarm_notify (struct app_context *ctx, XSyncAlarmNotifyEvent *ev)
 			XSyncPositiveComparison, ctx->idle_timeout);
 }
 
-// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+// --- Command -----------------------------------------------------------------
 
 static void
 command_queue_start (struct app_context *ctx)
@@ -1658,7 +1714,7 @@ on_command_start (void *user_data)
 	poller_fd_set (&ctx->command_event, POLLIN);
 }
 
-// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+// --- MPD ---------------------------------------------------------------------
 
 // Sometimes it's not that easy and there can be repeating entries
 static void
@@ -1840,7 +1896,7 @@ on_mpd_reconnect (void *user_data)
 	}
 }
 
-// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+// --- NUT ---------------------------------------------------------------------
 
 static bool
 nut_common_handler (const struct nut_response *response)
@@ -2105,7 +2161,214 @@ on_nut_reconnect (void *user_data)
 	poller_timer_set (&ctx->nut_reconnect, 10 * 1000);
 }
 
+// --- upscat ------------------------------------------------------------------
+
+static const char *
+upscat_field (const struct str_map *columns,
+	const struct strv *fields, const char *name)
+{
+	void *i = str_map_find (columns, name);
+	if (!i || (uintptr_t) i - 1 >= fields->len)
+		return NULL;
+	return fields->vector[(uintptr_t) i - 1];
+}
+
+// Very much like nut_process_ups(), not bothering with approximating VA as W,
+// as it appears to produce pointless results.
+static bool
+upscat_process_ups (struct app_context *ctx, const struct strv *fields)
+{
+	const struct str_map *m = &ctx->upscat_columns;
+	const char *ac      = upscat_field (m, fields, "AC Present");
+	const char *charge  = upscat_field (m, fields, "Remaining Capacity");
+	const char *runtime = upscat_field (m, fields, "Run Time To Empty");
+	const char *load    = upscat_field (m, fields, "Percent Load");
+
+	if (!soft_assert (ac && charge && runtime))
+		return false;
+
+	unsigned long runtime_sec;
+	if (!soft_assert (xstrtoul (&runtime_sec, runtime, 10)))
+		return false;
+
+	struct strv items = strv_make ();
+	bool running_on_batteries = !atoi (ac);
+
+	if (running_on_batteries)
+		strv_append (&items, "on battery");
+	if (running_on_batteries || strcmp (charge, "100"))
+		strv_append_owned (&items, xstrdup_printf ("%s%%", charge));
+	if (running_on_batteries)
+		strv_append_owned (&items, interval_string (runtime_sec));
+
+	// Only show load if it's higher than the threshold so as to not distract
+	struct config_item *root = ctx->config.root;
+	const int64_t *threshold = get_config_integer (root, "upscat.load_thld");
+	unsigned long load_n;
+	if (load
+	 && xstrtoul (&load_n, load, 10)
+	 && load_n >= (unsigned long) *threshold)
+		strv_append_owned (&items, xstrdup_printf ("load %s%%", load));
+
+	if (!items.len)
+	{
+		strv_free (&items);
+		return true;
+	}
+
+	struct str result = str_make ();
+	str_append (&result, "UPS: ");
+	for (size_t i = 0; i < items.len; i++)
+	{
+		if (i) str_append (&result, "; ");
+		str_append (&result, items.vector[i]);
+	}
+	strv_free (&items);
+
+	// Let's assume there is only one device getting updates.
+	cstr_set (&ctx->upscat_status, str_steal (&result));
+	return true;
+}
+
+static void
+upscat_process_line (struct app_context *ctx, const struct strv *fields)
+{
+	cstr_set (&ctx->upscat_status, NULL);
+	if (!ctx->upscat_columns.len)
+	{
+		for (size_t i = 0; i < fields->len; i++)
+			str_map_set (&ctx->upscat_columns,
+				fields->vector[i], (void *) (i + 1));
+	}
+	else if (!upscat_process_ups (ctx, fields))
+		cstr_set (&ctx->upscat_status, xstrdup ("upscat parse failure"));
+}
+
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+static void
+upscat_queue_start (struct app_context *ctx)
+{
+	poller_timer_set (&ctx->upscat_start, 30 * 1000);
+}
+
+// Very much like on_command_ready(), but going line by line instead.
+static void
+on_upscat_ready (const struct pollfd *pfd, void *user_data)
+{
+	struct app_context *ctx = user_data;
+	struct str *buf = &ctx->upscat_buffer;
+	enum socket_io_result result = socket_io_try_read (pfd->fd, buf);
+
+	char *last_status = NULL;
+	if (ctx->upscat_status)
+		last_status = xstrdup (ctx->upscat_status);
+
+	size_t end = 0;
+	for (size_t i = 0; i < buf->len; i++)
+	{
+		if (buf->str[i] != '\n')
+			continue;
+
+		buf->str[i] = '\0';
+
+		struct strv fields = strv_make ();
+		cstr_split (buf->str + end, ",", false, &fields);
+		upscat_process_line (ctx, &fields);
+		strv_free (&fields);
+
+		end = i + 1;
+	}
+	str_remove_slice (buf, 0, end);
+
+	if (result != SOCKET_IO_OK)
+	{
+		// The pipe may have been closed independently
+		if (ctx->upscat_pid != -1)
+			(void) kill (ctx->upscat_pid, SIGTERM);
+
+		poller_fd_reset (&ctx->upscat_event);
+		xclose (ctx->upscat_fd);
+		ctx->upscat_fd = -1;
+		ctx->upscat_pid = -1;
+
+		cstr_set (&ctx->upscat_status, xstrdup ("upscat failure"));
+
+		print_error ("upscat failed");
+		upscat_queue_start (ctx);
+	}
+
+	bool data_have_changed = !last_status != !ctx->upscat_status
+		|| (last_status && strcmp (last_status, ctx->upscat_status));
+	free (last_status);
+	if (data_have_changed)
+		refresh_status (ctx);
+}
+
+// Very much like on_command_start().
+//
+// In theory, this whole feature could be moved to the slave, but part of
+// the point of that slave is that it can be a script, and it's not particularly
+// easy to combine data sources in a script.  But we could make it possible
+// to define an array of commands to run.
+//
+// At least this way we have the NUT/upscat logic next to each other.
+static void
+on_upscat_start (void *user_data)
+{
+	struct app_context *ctx = user_data;
+	if (!*get_config_boolean (ctx->config.root, "upscat.enabled"))
+		return;
+
+	const char *command =
+		get_config_string (ctx->config.root, "upscat.command");
+	if (!command)
+		return;
+
+	int output_pipe[2];
+	if (pipe (output_pipe))
+	{
+		print_error ("%s: %s", "pipe", strerror (errno));
+		upscat_queue_start (ctx);
+		return;
+	}
+
+	posix_spawn_file_actions_t actions;
+	posix_spawn_file_actions_init (&actions);
+	posix_spawn_file_actions_adddup2
+		(&actions, output_pipe[PIPE_WRITE], STDOUT_FILENO);
+	posix_spawn_file_actions_addclose (&actions, output_pipe[PIPE_READ]);
+	posix_spawn_file_actions_addclose (&actions, output_pipe[PIPE_WRITE]);
+
+	pid_t pid = -1;
+	char *argv[] = { "sh", "-c", (char *) command, NULL };
+	int result = posix_spawnp (&pid, argv[0], &actions, NULL, argv, environ);
+	posix_spawn_file_actions_destroy (&actions);
+
+	set_blocking (output_pipe[PIPE_READ], false);
+	set_cloexec (output_pipe[PIPE_READ]);
+	xclose (output_pipe[PIPE_WRITE]);
+
+	if (result)
+	{
+		xclose (output_pipe[PIPE_READ]);
+		print_error ("%s: %s", "posix_spawnp", strerror (result));
+		upscat_queue_start (ctx);
+		return;
+	}
+
+	ctx->upscat_pid = pid;
+	str_map_clear (&ctx->upscat_columns);
+	str_reset (&ctx->upscat_buffer);
+
+	ctx->upscat_event = poller_fd_make (&ctx->poller,
+		(ctx->upscat_fd = output_pipe[PIPE_READ]));
+	ctx->upscat_event.dispatcher = on_upscat_ready;
+	ctx->upscat_event.user_data = ctx;
+	poller_fd_set (&ctx->upscat_event, POLLIN);
+}
+
+// --- Noise -------------------------------------------------------------------
 
 static inline float
 noise_next_brownian (float last)
@@ -2277,7 +2540,7 @@ action_noise_adjust (struct app_context *ctx, const struct strv *args)
 	on_noise_timer (ctx);
 }
 
-// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+// --- PulseAudio --------------------------------------------------------------
 
 #define DEFAULT_SOURCE "@DEFAULT_SOURCE@"
 #define DEFAULT_SINK   "@DEFAULT_SINK@"
@@ -2399,7 +2662,7 @@ on_make_context (void *user_data)
 	pa_context_connect (ctx->context, NULL, PA_CONTEXT_NOFLAGS, NULL);
 }
 
-// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+// --- Actions -----------------------------------------------------------------
 
 static void
 spawn (char *argv[])
@@ -2635,7 +2898,7 @@ action_by_name (const char *name)
 	return (struct action) {};
 }
 
-// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+// --- X events ----------------------------------------------------------------
 
 static void
 on_x_keypress (struct app_context *ctx, XEvent *e)
@@ -2677,8 +2940,6 @@ on_xkb_event (struct app_context *ctx, XkbEvent *ev)
 	refresh_status (ctx);
 }
 
-// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-
 static void
 on_x_ready (const struct pollfd *pfd, void *user_data)
 {
@@ -2699,6 +2960,8 @@ on_x_ready (const struct pollfd *pfd, void *user_data)
 			on_x_alarm_notify (ctx, (XSyncAlarmNotifyEvent *) &ev);
 	}
 }
+
+// --- Init --------------------------------------------------------------------
 
 static bool
 parse_key_modifier (const char *modifier, unsigned *mods)
@@ -3327,6 +3590,8 @@ main (int argc, char *argv[])
 		on_mpd_reconnect, &ctx);
 	poller_timer_init_and_set (&ctx.nut_reconnect, &ctx.poller,
 		on_nut_reconnect, &ctx);
+	poller_timer_init_and_set (&ctx.upscat_start, &ctx.poller,
+		on_upscat_start, &ctx);
 	poller_timer_init_and_set (&ctx.noise_timer, &ctx.poller,
 		on_noise_timer, &ctx);
 
